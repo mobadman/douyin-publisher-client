@@ -1,0 +1,9 @@
+node_modules/
+dist/
+dist-*/
+.build-app-*/
+.build-stage-*/
+.ui-preview-*/
+tests/native-dialog-harness-bin/
+release/
+*.log
