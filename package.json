@@ -1,0 +1,52 @@
+{
+  "name": "douyin-publisher-client",
+  "version": "1.1.0",
+  "private": true,
+  "description": "抖音批量发布助手本地客户端",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test",
+    "test:native-dialog": "node scripts/native-dialog-self-check.js",
+    "build:native": "node scripts/verify-native.js",
+    "rebuild:native-experimental": "node scripts/build-native.js",
+    "predist": "node scripts/verify-native.js",
+    "dist": "electron-builder --win nsis"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "electron": "^37.2.0",
+    "electron-builder": "^26.0.12",
+    "playwright": "^1.54.2"
+  },
+  "build": {
+    "appId": "cn.boguan.douyin.publisher",
+    "productName": "抖音批量发布助手",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "node_modules/playwright/**/*",
+      "node_modules/playwright-core/**/*"
+    ],
+    "npmRebuild": false,
+    "extraResources": [
+      {
+        "from": "native/FileDialogHelper.exe",
+        "to": "native/FileDialogHelper.exe"
+      }
+    ],
+    "win": {
+      "icon": "build/app-icon.ico",
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "抖音批量发布助手"
+    }
+  }
+}

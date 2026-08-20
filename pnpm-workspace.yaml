@@ -1,0 +1,8 @@
+allowBuilds:
+  electron: true
+  electron-winstaller: true
+onlyBuiltDependencies:
+  - electron
+  - electron-winstaller
+confirmModulesPurge: false
+nodeLinker: hoisted
