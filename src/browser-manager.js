@@ -7,6 +7,7 @@ const { RunReporter } = require('./run-reporter');
 const { selectFileInOpenDialog } = require('./native-file-dialog');
 const {
   classifyPublishSnapshot,
+  createPlatformSubmissionEvidence,
   PUBLISH_SUCCESS_PATTERN,
   PUBLISH_ERROR_PATTERN
 } = require('./publish-result');
@@ -177,8 +178,8 @@ class BrowserManager {
         if (item.commerce?.required) payload.commerce = { ...item.commerce };
         const outcome = await this.publishPayload(payload, reporter, `计划第${item.sequence}条`);
         page = outcome.page;
-        await hooks.onItemState?.(item, 'verified', '平台成功提示及作品管理记录均已核验', outcome.verification);
-        reporter.add(`完成计划第${item.sequence}条`, '平台成功提示及作品管理记录均已核验');
+        await hooks.onItemState?.(item, 'verified', '平台已明确确认提交；作品ID待稍后同步', outcome.verification);
+        reporter.add(`完成计划第${item.sequence}条`, '平台已明确确认提交；继续执行下一条，作品ID待批次完成后同步');
         activeItem = null;
         await page.waitForTimeout(1500);
       }
@@ -339,8 +340,8 @@ class BrowserManager {
 
     const publishResult = await this.clickPublishAndWait(page, reporter);
     reporter.add(`${label}发布结果`, publishResult.detail);
-    const verification = await this.verifyScheduledEntry(page, payload);
-    reporter.add(`${label}作品管理复核`, verification.detail);
+    const verification = createPlatformSubmissionEvidence(payload, publishResult);
+    reporter.add(`${label}平台提交确认`, verification.detail);
     return { page, publishResult, verification };
   }
 

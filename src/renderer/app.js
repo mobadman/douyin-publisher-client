@@ -10,7 +10,7 @@ let editingItemId = null;
 let editingCoverPath = null;
 
 const stateLabels = {
-  pending: '待发布', running: '执行中', verified: '已发布并核验',
+  pending: '待发布', running: '执行中', verified: '平台已确认提交',
   failed: '失败，可续发', uncertain: '结果待人工确认', skipped: '未勾选', 'id-resolved': '已获取ID',
   'waiting-human': '等待管理员扫码'
 };

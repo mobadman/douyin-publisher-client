@@ -6,10 +6,10 @@ const path = require('node:path');
 const html = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'index.html'), 'utf8');
 const app = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'app.js'), 'utf8');
 
-test('3.0.5多平台版本名称和工作区入口完整显示', () => {
+test('3.0.6多平台版本名称和工作区入口完整显示', () => {
   assert.match(html, /短视频工具/);
   assert.match(html, /短视频批量发布助手/);
-  assert.match(html, /开发版 3\.0\.5/);
+  assert.match(html, /开发版 3\.0\.6/);
   assert.match(html, /id="workspace-select"/);
   assert.match(html, /id="commerce-panel"/);
   assert.match(html, /商品短标题库/);

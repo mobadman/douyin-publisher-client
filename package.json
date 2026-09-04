@@ -1,6 +1,6 @@
 {
   "name": "short-video-publisher-client-runtime",
-  "version": "3.0.5",
+  "version": "3.0.6",
   "private": true,
   "author": "博观团队",
   "description": "多平台短视频批量发布助手本地客户端",
@@ -19,7 +19,7 @@
     "appId": "cn.boguan.shortvideo.publisher",
     "productName": "短视频批量发布助手",
     "electronVersion": "37.10.3",
-    "directories": { "output": "dist-3.0.5" },
+    "directories": { "output": "dist-3.0.6" },
     "files": ["src/**/*", "package.json", "node_modules/playwright/**/*", "node_modules/playwright-core/**/*"],
     "extraResources": [{ "from": "native/FileDialogHelper.exe", "to": "native/FileDialogHelper.exe" }],
     "npmRebuild": false,
