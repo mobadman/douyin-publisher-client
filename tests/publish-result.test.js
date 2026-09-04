@@ -10,11 +10,11 @@ test('平台成功提示判定为已发布', () => {
   }).state, 'published');
 });
 
-test('跳转作品管理判定为已发布', () => {
+test('仅跳转作品管理不能判定为已发布', () => {
   assert.equal(classifyPublishSnapshot({
     initialUrl: 'https://creator.douyin.com/creator-micro/content/upload',
     currentUrl: 'https://creator.douyin.com/creator-micro/content/manage'
-  }).state, 'published');
+  }).state, 'responded');
 });
 
 test('失败提示优先于成功提示', () => {

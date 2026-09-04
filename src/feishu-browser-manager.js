@@ -14,6 +14,20 @@ function normalizeClipboardText(value) {
     .trim();
 }
 
+function isSameSheetPage(currentUrl, sheetUrl) {
+  try {
+    const current = new URL(currentUrl);
+    const target = new URL(sheetUrl);
+    const targetSheet = target.searchParams.get('sheet');
+    if (!current.hostname.endsWith('.feishu.cn')) return false;
+    if (targetSheet) return current.searchParams.get('sheet') === targetSheet;
+    return current.hostname === target.hostname
+      && current.pathname.replace(/\/$/, '') === target.pathname.replace(/\/$/, '');
+  } catch {
+    return false;
+  }
+}
+
 function choosePreviewDownloadCandidate(containerBox, candidates) {
   return choosePreviewToolbarCandidate(containerBox, candidates, 1);
 }
@@ -102,7 +116,7 @@ class FeishuBrowserManager {
   async detect(sheetUrl) {
     if (!this.context) throw new Error('请先打开飞书 Chrome 并完成登录');
     const page = await this.getPage();
-    if (sheetUrl && !page.url().includes('/sheets/')) {
+    if (sheetUrl && !isSameSheetPage(page.url(), sheetUrl)) {
       await page.goto(sheetUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     }
     await page.waitForTimeout(1500);
@@ -119,7 +133,7 @@ class FeishuBrowserManager {
     if (this.lastDetection?.state !== 'logged-in') throw new Error('尚未确认飞书登录状态，请先点击“检测飞书登录”');
   }
 
-  async copySheet(sheetUrl, requiredHeaders) {
+  async copySheet(sheetUrl, requiredHeaders, options = {}) {
     this.assertNotCancelled();
     this.assertReady();
     const page = await this.getPage();
@@ -132,6 +146,10 @@ class FeishuBrowserManager {
       throw new Error('飞书登录已经失效，请重新登录并再次检测');
     }
 
+    if (options.filterMode === 'auto') {
+      await this.applyDateFilter(page, requiredHeaders, options.publishDateHeader, options.targetDate);
+    }
+
     const copied = await this.copyFromGrid(page, requiredHeaders);
     this.sheetCursor = null;
     if (!copied) {
@@ -142,6 +160,124 @@ class FeishuBrowserManager {
       throw new Error(`复制到的表格数据缺少表头【${missingHeaders.join('】【')}】。请确认链接中的 sheet 参数指向“主页视频审核表”`);
     }
     return copied;
+  }
+
+  async applyDateFilter(page, requiredHeaders, publishDateHeader, targetDate) {
+    this.assertNotCancelled();
+    const grid = await this.findGridTarget(page);
+    if (!grid) throw new Error('自动筛选前没有识别到飞书表格网格');
+    const headerSnapshot = await this.copyFromGrid(page, requiredHeaders);
+    const headerLine = String(headerSnapshot || '').split(/\r?\n/).find((line) => requiredHeaders.every((header) => line.includes(header)));
+    const headerIndex = headerLine ? headerLine.split('\t').findIndex((cell) => cell.trim() === publishDateHeader) : -1;
+    if (headerIndex < 0) throw new Error('自动筛选时无法确定【发布时间】列');
+
+    const headerTexts = page.getByText(publishDateHeader, { exact: true });
+    let headerBox = null;
+    for (let index = 0; index < await headerTexts.count(); index += 1) {
+      const candidate = headerTexts.nth(index);
+      if (!await candidate.isVisible().catch(() => false)) continue;
+      const box = await candidate.boundingBox().catch(() => null);
+      if (!box || box.x < grid.box.x || box.x > grid.box.x + grid.box.width) continue;
+      if (box.y < grid.box.y || box.y > grid.box.y + Math.min(180, grid.box.height * 0.25)) continue;
+      headerBox = box;
+      break;
+    }
+    if (!headerBox) {
+      await grid.candidate.click({ position: { x: Math.max(120, grid.box.width * 0.3), y: Math.max(100, grid.box.height * 0.3) } });
+      await page.keyboard.press('Escape').catch(() => {});
+      await page.keyboard.press('Control+Home');
+      for (let index = 0; index < headerIndex; index += 1) await page.keyboard.press('ArrowRight');
+      await page.waitForTimeout(350);
+      const selections = page.locator('[class*="active-cell"]:visible, [class*="selected-cell"]:visible, [class*="cell-cursor"]:visible, [class*="selection"]:visible');
+      let bestArea = Number.POSITIVE_INFINITY;
+      for (let index = 0; index < await selections.count(); index += 1) {
+        const box = await selections.nth(index).boundingBox().catch(() => null);
+        if (!box || box.width < 40 || box.height < 16 || box.height > 150) continue;
+        if (box.x < grid.box.x || box.x + box.width > grid.box.x + grid.box.width) continue;
+        if (box.y < grid.box.y || box.y > grid.box.y + Math.min(180, grid.box.height * 0.25)) continue;
+        const area = box.width * box.height;
+        if (area < bestArea) { bestArea = area; headerBox = box; }
+      }
+    }
+    if (!headerBox) throw new Error('无法识别【发布时间】表头的可见位置，已在下载前停止');
+
+    const filterControls = page.locator([
+      '[aria-label*="筛选"]:visible', '[title*="筛选"]:visible',
+      '[data-tooltip*="筛选"]:visible', '[class*="filter"]:visible',
+      'button:visible', '[role="button"]:visible', 'svg:visible'
+    ].join(', '));
+    let filterControl = null;
+    let closestDistance = Number.POSITIVE_INFINITY;
+    const controlLimit = Math.min(await filterControls.count(), 300);
+    for (let index = 0; index < controlLimit; index += 1) {
+      const candidate = filterControls.nth(index);
+      const box = await candidate.boundingBox().catch(() => null);
+      if (!box || box.width < 8 || box.width > 60 || box.height < 8 || box.height > 60) continue;
+      const centerX = box.x + box.width / 2;
+      const centerY = box.y + box.height / 2;
+      if (centerX < headerBox.x + headerBox.width - 8 || centerX > headerBox.x + headerBox.width + 90) continue;
+      if (Math.abs(centerY - (headerBox.y + headerBox.height / 2)) > 45) continue;
+      const label = `${await candidate.getAttribute('aria-label').catch(() => '')} ${await candidate.getAttribute('title').catch(() => '')} ${await candidate.getAttribute('class').catch(() => '')}`;
+      const distance = Math.abs(centerX - (headerBox.x + headerBox.width + 20)) + Math.abs(centerY - (headerBox.y + headerBox.height / 2));
+      const weightedDistance = /筛选|filter/i.test(label) ? distance - 100 : distance;
+      if (weightedDistance < closestDistance) {
+        closestDistance = weightedDistance;
+        filterControl = candidate;
+      }
+    }
+    if (!filterControl) throw new Error('已找到【发布时间】表头，但无法唯一识别其右侧筛选按钮');
+    await filterControl.click({ timeout: 5000 });
+    await page.waitForTimeout(800);
+
+    const popup = page.locator('[role="dialog"]:visible, [role="menu"]:visible, [class*="filter"]:visible, [class*="popup"]:visible').filter({ hasText: /筛选|排序|条件/ }).last();
+    if (!await popup.isVisible().catch(() => false)) {
+      throw new Error('无法打开【发布时间】的筛选面板。已在下载前停止；可手动筛选日期后使用“使用当前筛选拉取”');
+    }
+
+    const [year, month, day] = String(targetDate).split('-');
+    const variants = [targetDate, targetDate.replace(/-/g, '/'), `${year}年${month}月${day}日`];
+    const inputs = popup.locator('input:visible');
+    let filled = false;
+    for (let index = 0; index < await inputs.count(); index += 1) {
+      const input = inputs.nth(index);
+      const type = String(await input.getAttribute('type') || '').toLowerCase();
+      const placeholder = String(await input.getAttribute('placeholder') || '');
+      if (type === 'checkbox' || type === 'radio') continue;
+      if (type === 'date') await input.fill(targetDate);
+      else if (/搜索|筛选|请输入|日期/.test(placeholder) || await inputs.count() === 1) await input.fill(targetDate);
+      else continue;
+      filled = true;
+      await page.waitForTimeout(500);
+      break;
+    }
+
+    let matched = false;
+    for (const variant of variants) {
+      const choices = popup.getByText(variant, { exact: false });
+      for (let index = 0; index < await choices.count(); index += 1) {
+        const choice = choices.nth(index);
+        if (!await choice.isVisible().catch(() => false)) continue;
+        await choice.click({ timeout: 5000 });
+        matched = true;
+        break;
+      }
+      if (matched) break;
+    }
+    if (!matched && !filled) {
+      throw new Error(`已打开筛选面板，但没有找到日期${targetDate}的可操作选项。请改用当前筛选模式`);
+    }
+    const confirmButtons = popup.getByRole('button', { name: /确定|确认|应用|完成/ });
+    let confirmed = false;
+    for (let index = 0; index < await confirmButtons.count(); index += 1) {
+      const button = confirmButtons.nth(index);
+      if (!await button.isVisible().catch(() => false) || !await button.isEnabled().catch(() => false)) continue;
+      await button.click({ timeout: 5000 });
+      confirmed = true;
+      break;
+    }
+    if (!confirmed) await page.keyboard.press('Enter');
+    await page.waitForTimeout(1200);
+    this.sheetCursor = null;
   }
 
   async copyFromGrid(page, requiredHeaders) {
@@ -257,13 +393,13 @@ class FeishuBrowserManager {
     this.assertReady();
     if (!/^[A-Z]+\d+$/.test(String(cellReference || ''))) throw new Error('飞书附件单元格位置无效');
     const page = await this.getPage();
-    if (!page.url().includes('/sheets/') || !page.url().includes(new URL(sheetUrl).searchParams.get('sheet'))) {
+    if (!isSameSheetPage(page.url(), sheetUrl)) {
       await page.goto(sheetUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
       await page.waitForTimeout(3000);
       this.sheetCursor = null;
     }
     await page.bringToFront();
-    await this.goToCell(page, cellReference, attachmentName);
+    const actualCell = await this.goToCell(page, cellReference, attachmentName);
     this.assertNotCancelled();
 
     const container = await this.openAttachmentPreview(page, attachmentName);
@@ -280,7 +416,20 @@ class FeishuBrowserManager {
     // 飞书关闭附件预览后，焦点通常停留在关闭按钮或已经移除的预览层，
     // 不能继续假设方向键仍由表格接收。下一条必须重新聚焦网格并从 A1 定位。
     this.sheetCursor = null;
-    return outputPath;
+    return { outputPath, actualCell };
+  }
+
+  async resolveAttachmentCell(sheetUrl, cellReference, attachmentName) {
+    this.assertNotCancelled();
+    this.assertReady();
+    const page = await this.getPage();
+    if (!isSameSheetPage(page.url(), sheetUrl)) {
+      await page.goto(sheetUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      await page.waitForTimeout(3000);
+      this.sheetCursor = null;
+    }
+    await page.bringToFront();
+    return this.goToCell(page, cellReference, attachmentName);
   }
 
   async goToCell(page, cellReference, attachmentName) {
@@ -315,6 +464,60 @@ class FeishuBrowserManager {
       );
     }
     this.sheetCursor = { sheetKey, column, row };
+    const actualCell = await this.readSelectedCellAddress(page, match[1]);
+    if (!actualCell) {
+      this.sheetCursor = null;
+      throw new Error(`已定位素材“${attachmentName}”，但无法读取飞书显示的实际单元格地址`);
+    }
+    return actualCell;
+  }
+
+  async readSelectedCellAddress(page, expectedColumn) {
+    const candidates = page.locator([
+      'input:visible', '[class*="name-box"]:visible', '[class*="nameBox"]:visible',
+      '[class*="cell-name"]:visible', '[class*="cellName"]:visible',
+      '[aria-label*="名称框"]:visible', '[aria-label*="单元格"]:visible'
+    ].join(', '));
+    const values = await candidates.evaluateAll((elements) => elements.map((element) => ({
+      value: 'value' in element ? element.value : '',
+      text: element.textContent || '',
+      aria: element.getAttribute('aria-label') || '',
+      title: element.getAttribute('title') || '',
+      data: Object.values(element.dataset || {}).join(' ')
+    }))).catch(() => []);
+    for (const item of values) {
+      const joined = `${item.value} ${item.text} ${item.aria} ${item.title} ${item.data}`;
+      const matches = joined.match(/\b[A-Z]{1,3}\d+\b/g) || [];
+      const exact = matches.find((value) => value.startsWith(expectedColumn));
+      if (exact) return exact;
+    }
+
+    const selection = page.locator('[class*="active-cell"]:visible, [class*="selected-cell"]:visible, [class*="cell-cursor"]:visible, [class*="selection"]:visible');
+    const metadata = await selection.evaluateAll((elements) => elements.map((element) => ({
+      attributes: Array.from(element.attributes || []).map((attribute) => `${attribute.name}=${attribute.value}`).join(' '),
+      text: element.textContent || ''
+    }))).catch(() => []);
+    for (const item of metadata) {
+      const direct = `${item.attributes} ${item.text}`.match(/\b[A-Z]{1,3}\d+\b/g) || [];
+      const exact = direct.find((value) => value.startsWith(expectedColumn));
+      if (exact) return exact;
+      const row = item.attributes.match(/(?:row-index|rowIndex)=['"]?(\d+)/i)?.[1];
+      if (row) return `${expectedColumn}${Number(row) + 1}`;
+    }
+    const clipboardAddress = await page.evaluate(async (column) => {
+      const items = await navigator.clipboard.read().catch(() => []);
+      for (const item of items) {
+        if (!item.types.includes('text/html')) continue;
+        const html = await (await item.getType('text/html')).text();
+        const address = html.match(/\b[A-Z]{1,3}\d+\b/g)?.find((value) => value.startsWith(column));
+        if (address) return address;
+        const row = html.match(/(?:row-index|rowIndex)=["']?(\d+)/i)?.[1];
+        if (row) return `${column}${Number(row) + 1}`;
+      }
+      return '';
+    }, expectedColumn).catch(() => '');
+    if (clipboardAddress) return clipboardAddress;
+    return '';
   }
 
   async copySelectedCell(page) {

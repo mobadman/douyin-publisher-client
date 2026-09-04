@@ -31,8 +31,8 @@ button:hover { filter: brightness(.96); } button:disabled { opacity: .42; cursor
 .button-row, .plan-controls, .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 11px; margin-top: 16px; }
 .plan-controls { align-items: flex-start; }
 .field { display: flex; flex-direction: column; gap: 8px; font-weight: 700; margin-top: 15px; }.field.compact { width: 250px; margin-top: 0; }
-.field input, .field textarea { width: 100%; border: 1px solid #cfd3cd; border-radius: 9px; padding: 10px 12px; font: inherit; font-weight: 400; }
-.field input:focus, .field textarea:focus { outline: 2px solid rgba(39,95,73,.16); border-color: #326a53; }.field small { font-weight: 400; color: #797e78; }
+.field input, .field textarea, .field select { width: 100%; border: 1px solid #cfd3cd; border-radius: 9px; padding: 10px 12px; font: inherit; font-weight: 400; background: white; }
+.field input:focus, .field textarea:focus, .field select:focus { outline: 2px solid rgba(39,95,73,.16); border-color: #326a53; }.field small { font-weight: 400; color: #797e78; }
 .action-with-estimate { display: grid; grid-template-rows: auto 18px; align-items: start; gap: 4px; }.action-with-estimate small { color: #767c76; font-size: 11px; line-height: 18px; }
 .table-wrap { overflow: auto; max-height: 500px; border: 1px solid #e0e2dd; border-radius: 10px; margin-top: 18px; }
 table { width: 100%; border-collapse: collapse; min-width: 1120px; font-size: 13px; } th, td { padding: 10px; text-align: left; border-bottom: 1px solid #e8e9e5; vertical-align: top; max-width: 230px; overflow-wrap: anywhere; }
@@ -58,4 +58,29 @@ pre { background: #1f2924; color: #dce8e2; padding: 18px; border-radius: 11px; l
 .donation-modal { width: min(760px, 100%); text-align: center; }
 .donation-modal img { display: block; max-width: 100%; max-height: 68vh; margin: 18px auto 10px; border-radius: 12px; }
 .danger-text { color: #9c3030; }
+.plan-selection-bar { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; margin-top: 14px; }
+.plan-selection-bar span { color: #666d67; font-size: 12px; }
+.plan-panel table { min-width: 1650px; }
+button.mini { padding: 6px 8px; border-radius: 7px; font-size: 11px; white-space: nowrap; }
+.table-actions { display: flex; flex-wrap: wrap; gap: 5px; min-width: 100px; }
+.immutable-file { padding: 10px 12px; background: #f1f3ef; border-radius: 9px; color: #5f665f; overflow-wrap: anywhere; }
+.edit-plan-modal { width: min(660px, 100%); }
+.edit-two-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.test-id-tool { margin-top: 24px; padding-top: 20px; border-top: 1px solid #e1e3de; }
+.test-id-tool h3 { margin: 0; }
+.workspace-controls { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; margin-top: 14px; }
+.workspace-controls .field { flex: 1 1 320px; }
+.product-search { display: grid; grid-template-columns: 1fr 1fr auto; align-items: end; gap: 12px; }
+.product-search button { margin-bottom: 1px; }
+.product-list { display: grid; gap: 12px; margin-top: 15px; }
+.product-card { border: 1px solid #e0e3dd; border-radius: 12px; padding: 15px; background: #f8f9f6; }
+.product-card > div:first-child { display: flex; justify-content: space-between; gap: 12px; }
+.product-card small { display: block; color: #737a73; font-weight: 400; margin-top: 4px; }
+.product-candidates { display: grid; gap: 8px; margin-top: 12px; }
+.product-candidate { display: flex; gap: 9px; padding: 10px; border-radius: 9px; background: white; line-height: 1.45; }
+.product-candidate.invalid { opacity: .55; background: #fff0f0; }
+.manual-product { margin-top: 16px; padding: 13px 15px; border: 1px dashed #cdd2cb; border-radius: 10px; }
+.manual-product summary { cursor: pointer; font-weight: 700; color: #4c554e; }
+.mapping-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.mapping-list > span { padding: 7px 10px; border-radius: 8px; background: #f2f4f0; color: #59615a; font-size: 12px; }
 @media (max-width: 900px) { .app-shell { grid-template-columns: 1fr; } aside { position: static; height: auto; } nav { grid-template-columns: repeat(4, 1fr); } .side-status { margin-top: 10px; } main { width: min(100% - 28px, 1180px); } .form-grid, .guide-grid { grid-template-columns: 1fr; } }

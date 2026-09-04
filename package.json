@@ -1,52 +1,29 @@
 {
-  "name": "douyin-publisher-client",
-  "version": "1.1.0",
+  "name": "short-video-publisher-client-runtime",
+  "version": "3.0.5",
   "private": true,
-  "description": "抖音批量发布助手本地客户端",
+  "author": "博观团队",
+  "description": "多平台短视频批量发布助手本地客户端",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
     "test": "node --test",
+    "test:ui": "node scripts/ui-smoke.js",
     "test:native-dialog": "node scripts/native-dialog-self-check.js",
-    "build:native": "node scripts/verify-native.js",
-    "rebuild:native-experimental": "node scripts/build-native.js",
     "predist": "node scripts/verify-native.js",
     "dist": "electron-builder --win nsis"
   },
-  "dependencies": {},
-  "devDependencies": {
-    "electron": "^37.2.0",
-    "electron-builder": "^26.0.12",
-    "playwright": "^1.54.2"
-  },
+  "dependencies": { "playwright": "1.62.1", "playwright-core": "1.62.1" },
+  "devDependencies": { "electron": "37.10.3", "electron-builder": "26.15.3" },
   "build": {
-    "appId": "cn.boguan.douyin.publisher",
-    "productName": "抖音批量发布助手",
-    "directories": {
-      "output": "dist"
-    },
-    "files": [
-      "src/**/*",
-      "package.json",
-      "node_modules/playwright/**/*",
-      "node_modules/playwright-core/**/*"
-    ],
+    "appId": "cn.boguan.shortvideo.publisher",
+    "productName": "短视频批量发布助手",
+    "electronVersion": "37.10.3",
+    "directories": { "output": "dist-3.0.5" },
+    "files": ["src/**/*", "package.json", "node_modules/playwright/**/*", "node_modules/playwright-core/**/*"],
+    "extraResources": [{ "from": "native/FileDialogHelper.exe", "to": "native/FileDialogHelper.exe" }],
     "npmRebuild": false,
-    "extraResources": [
-      {
-        "from": "native/FileDialogHelper.exe",
-        "to": "native/FileDialogHelper.exe"
-      }
-    ],
-    "win": {
-      "icon": "build/app-icon.ico",
-      "target": "nsis"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "shortcutName": "抖音批量发布助手"
-    }
+    "win": { "target": "nsis", "icon": "build/app-icon.ico" },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "shortcutName": "短视频批量发布助手" }
   }
 }

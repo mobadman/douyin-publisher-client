@@ -11,6 +11,12 @@ const {
   PUBLISH_ERROR_PATTERN
 } = require('./publish-result');
 const { asChineseError } = require('./chinese-error');
+const {
+  formatLocalMinute,
+  extractProfileApiRecords,
+  mergeProfileRecords,
+  selectProfileRecord
+} = require('./douyin-profile-id');
 
 const CREATOR_HOME = 'https://creator.douyin.com/creator-micro/home';
 const CREATOR_UPLOAD = 'https://creator.douyin.com/creator-micro/content/upload';
@@ -45,6 +51,11 @@ class BrowserManager {
     return this.active
       ? { activeAccountId: this.active.accountId, open: true }
       : { activeAccountId: null, open: false };
+  }
+
+  contextFor(accountId) {
+    if (!this.active || this.active.accountId !== String(accountId)) throw new Error('请先打开并检测抖音发布账号');
+    return this.active.context;
   }
 
   async open(account) {
@@ -113,7 +124,8 @@ class BrowserManager {
       reporter.add('校验本地输入', '视频、封面、正文、Tag和定时时间通过校验');
       const liveAccount = account.lastDetected;
       reporter.add('使用已检测账号', `测试小号 ${liveAccount.douyinId}`);
-      page = await this.publishPayload(payload, reporter);
+      const outcome = await this.publishPayload(payload, reporter);
+      page = outcome.page;
       await page.bringToFront();
       const reportPath = await reporter.save('published', null, page);
       return { status: 'published', reportPath, liveAccount, scheduledAt: payload.scheduledAt };
@@ -129,24 +141,30 @@ class BrowserManager {
     }
   }
 
-  async submitPlannedBatch(account, plan) {
+  async submitPlannedBatch(account, plan, hooks = {}) {
     this.assertNotCancelled();
     if (!this.active || this.active.accountId !== account.id) throw new Error('请先打开计划所使用账号的 Chrome');
     if (account.lastDetected?.state !== 'logged-in' || !account.lastDetected?.douyinId) {
       throw new Error('开始批量发布前必须先在客户端成功检测当前账号');
     }
     if (!plan || !Array.isArray(plan.items) || !plan.items.length) throw new Error('当前没有可执行的发布计划');
-    const blocked = plan.items.filter((item) => !item.ready);
-    if (blocked.length) throw new Error(`计划中有${blocked.length}条素材未就绪，请先处理红色问题项`);
+    const candidates = plan.items.filter((item) => (
+      item.selected && ['pending', 'failed', 'skipped'].includes(item.execution?.state || 'pending')
+    ));
+    if (!candidates.length) throw new Error('当前没有勾选且可继续执行的视频');
+    const blocked = candidates.filter((item) => !item.ready);
+    if (blocked.length) throw new Error(`勾选项目中有${blocked.length}条素材未就绪，请先处理红色问题项`);
 
     const reporter = new RunReporter(this.reportsRoot, `批量定时发布-${account.label}`);
     let page;
+    let activeItem = null;
     try {
-      reporter.add('批次开始', `账号：${account.lastDetected.douyinId}；日期：${plan.date}；共${plan.items.length}条`);
-      for (let index = 0; index < plan.items.length; index += 1) {
+      reporter.add('批次开始', `账号：${account.lastDetected.douyinId}；日期：${plan.date}；本次勾选${candidates.length}条`);
+      for (const item of candidates) {
         this.assertNotCancelled();
-        const item = plan.items[index];
-        reporter.add(`开始第${index + 1}条`, `${path.basename(item.videoPath)}；${item.category}；${item.model}；${item.scheduledLocal}`);
+        activeItem = item;
+        await hooks.onItemState?.(item, 'running', '正在填写发布页面');
+        reporter.add(`开始计划第${item.sequence}条`, `${path.basename(item.videoPath)}；${item.category}；${item.model}；${item.scheduledLocal}`);
         const scheduledAt = new Date(item.scheduledLocal.replace(' ', 'T'));
         const payload = normalizeTestPayload({
           videoPath: item.videoPath,
@@ -155,19 +173,125 @@ class BrowserManager {
           tags: item.tags,
           scheduledAt: scheduledAt.toISOString()
         });
-        page = await this.publishPayload(payload, reporter, `第${index + 1}条`);
-        reporter.add(`完成第${index + 1}条`, '平台已确认发布成功');
+        payload.aiGenerated = item.aiGenerated === true;
+        if (item.commerce?.required) payload.commerce = { ...item.commerce };
+        const outcome = await this.publishPayload(payload, reporter, `计划第${item.sequence}条`);
+        page = outcome.page;
+        await hooks.onItemState?.(item, 'verified', '平台成功提示及作品管理记录均已核验', outcome.verification);
+        reporter.add(`完成计划第${item.sequence}条`, '平台成功提示及作品管理记录均已核验');
+        activeItem = null;
+        await page.waitForTimeout(1500);
       }
       const reportPath = await reporter.save('published', null, page);
-      return { status: 'published', count: plan.items.length, reportPath };
+      return { status: 'published', count: candidates.length, reportPath };
     } catch (error) {
+      if (activeItem) {
+        await hooks.onItemState?.(
+          activeItem,
+          error.code === 'PUBLISH_OUTCOME_UNCERTAIN' ? 'uncertain' : 'failed',
+          error.message
+        ).catch(() => {});
+      }
       const explained = asChineseError(error, '批量发布');
-      reporter.add('整批停止', `${explained.message}；后续视频未执行，只允许人工接管`);
+      reporter.add('批次停止并保留进度', `${explained.message}；已完成项目不会重复，未完成项目可稍后继续`);
       const status = error.code === 'PUBLISH_OUTCOME_UNCERTAIN' ? 'uncertain' : 'failed';
       if (!page) page = await this.getPage().catch(() => undefined);
       const reportPath = await reporter.save(status, explained, page);
-      throw new Error(`${explained.message}。整批已停止，后续视频未执行。错误报告：${reportPath}`);
+      throw new Error(`${explained.message}。当前进度已保存，可处理后继续未完成项目。错误报告：${reportPath}`);
     }
+  }
+
+  async scanPublishedIds(account, plan) {
+    if (!this.active || this.active.accountId !== account.id) throw new Error('请先打开发布账号的 Chrome');
+    if (account.role !== 'production') throw new Error('发布ID只能从发布账号获取');
+    const page = await this.getPage();
+    const records = await this.readSelfProfileRecords(page);
+    const unresolved = (plan?.items || []).filter((item) => !item.publish?.videoId && ['verified','id-resolved'].includes(item.execution?.state));
+    const matches = [];
+    for (const item of unresolved) {
+      const selected = selectProfileRecord(records, item.body, item.scheduledLocal);
+      if (selected.state !== 'matched') continue;
+      matches.push({
+        itemId: item.itemId,
+        videoId: selected.record.videoId,
+        videoUrl: selected.record.videoUrl
+      });
+    }
+    return { matches, unresolved: unresolved.length - matches.length };
+  }
+
+  async scanTestPublishedId(account, rawInput = {}) {
+    if (!this.active || this.active.accountId !== account.id) throw new Error('请先打开测试小号的 Chrome');
+    if (account.role !== 'test') throw new Error('这个测试流程只允许使用测试小号');
+    if (account.lastDetected?.state !== 'logged-in' || !account.lastDetected?.douyinId) {
+      throw new Error('获取ID前必须先在客户端成功检测测试小号');
+    }
+    const body = String(rawInput.body || '').trim();
+    const scheduledAt = new Date(String(rawInput.scheduledAt || ''));
+    if (!body) throw new Error('请保留刚才发布时使用的测试文案，否则无法匹配视频');
+    if (Number.isNaN(scheduledAt.getTime())) throw new Error('请保留刚才发布时使用的定时时间');
+    const scheduledLocal = formatLocalMinute(scheduledAt);
+    const page = await this.getPage();
+    const records = await this.readSelfProfileRecords(page);
+    const selected = selectProfileRecord(records, body, scheduledLocal);
+    if (selected.state === 'matched') {
+      return {
+        videoId: selected.record.videoId,
+        videoUrl: selected.record.videoUrl,
+        matchedTitle: selected.titleNeedle,
+        matchedTime: scheduledLocal,
+        scheduleDetail: selected.record.scheduleDetail || ''
+      };
+    }
+    if (selected.state === 'ambiguous') {
+      throw new Error(`个人主页找到多条同时匹配文案和${scheduledLocal}的视频，无法安全确定唯一ID`);
+    }
+    if (selected.state === 'time-mismatch') {
+      throw new Error(`个人主页已找到匹配文案，但没有读取到定时时间${scheduledLocal}对应的视频ID`);
+    }
+    throw new Error(`个人主页没有找到同时匹配文案和定时时间${scheduledLocal}的视频ID`);
+  }
+
+  async readSelfProfileRecords(page) {
+    const apiRecords = [];
+    const responseTasks = [];
+    const captureResponse = (response) => {
+      if (!response.url().includes('/aweme/v1/web/aweme/post/')) return;
+      responseTasks.push(response.json()
+        .then((payload) => { apiRecords.push(...extractProfileApiRecords(payload)); })
+        .catch(() => {}));
+    };
+    page.on('response', captureResponse);
+    try {
+      await page.goto('https://www.douyin.com/user/self', { waitUntil: 'domcontentloaded', timeout: 45_000 });
+      await page.waitForTimeout(2500);
+      let previousCount = 0;
+      let unchangedRounds = 0;
+      for (let round = 0; round < 5 && unchangedRounds < 2; round += 1) {
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
+        await page.waitForTimeout(1200);
+        await Promise.allSettled(responseTasks);
+        if (apiRecords.length === previousCount) unchangedRounds += 1;
+        else unchangedRounds = 0;
+        previousCount = apiRecords.length;
+      }
+    } finally {
+      page.off('response', captureResponse);
+      await Promise.allSettled(responseTasks);
+    }
+    const linkRecords = await page.locator('a[href*="/video/"]').evaluateAll((anchors) => anchors.map((anchor) => {
+      const href = String(anchor.href || anchor.getAttribute('href') || '');
+      const videoId = href.match(/\/video\/(\d+)/)?.[1] || '';
+      return {
+        videoId,
+        videoUrl: videoId ? `https://www.douyin.com/video/${videoId}` : href,
+        body: String(anchor.innerText || anchor.textContent || ''),
+        scheduledLocal: '',
+        scheduleDetail: '',
+        source: 'profile-link'
+      };
+    })).catch(() => []);
+    return mergeProfileRecords(apiRecords, linkRecords);
   }
 
   async publishPayload(payload, reporter, prefix = '') {
@@ -190,8 +314,20 @@ class BrowserManager {
 
     if (payload.coverPath) {
       this.assertNotCancelled();
-      await this.fillCover(page, payload.coverPath);
-      reporter.add(`${label}填写封面`, payload.coverPath);
+      const coverResult = await this.fillCover(page, payload.coverPath);
+      reporter.add(`${label}填写封面`, `${payload.coverPath}；竖封面和横封面均已设置${coverResult.recommendationDismissed ? '；已关闭“设置横封面获取多流量”提示' : ''}`);
+    }
+
+    if (payload.aiGenerated) {
+      this.assertNotCancelled();
+      await this.fillAiDeclaration(page);
+      reporter.add(`${label}添加自主声明`, '内容由AI生成');
+    }
+
+    if (payload.commerce?.required) {
+      this.assertNotCancelled();
+      await this.fillCommerceProduct(page, payload.commerce);
+      reporter.add(`${label}添加购物车商品`, `${payload.commerce.productShortTitle}；${payload.commerce.productUrl}`);
     }
 
     await this.fillSchedule(page, payload.localDate, payload.localTime);
@@ -203,7 +339,89 @@ class BrowserManager {
 
     const publishResult = await this.clickPublishAndWait(page, reporter);
     reporter.add(`${label}发布结果`, publishResult.detail);
-    return page;
+    const verification = await this.verifyScheduledEntry(page, payload);
+    reporter.add(`${label}作品管理复核`, verification.detail);
+    return { page, publishResult, verification };
+  }
+
+  async fillCommerceProduct(page, commerce) {
+    const productUrl = String(commerce.productUrl || '').trim();
+    const shortTitle = String(commerce.productShortTitle || '').trim().slice(0, 10);
+    if (!/^https:\/\//.test(productUrl)) throw new Error('商城视频缺少已确认的商品链接');
+    if (!shortTitle) throw new Error('商城视频缺少商品短标题');
+    await this.assertNoBlockingModal(page, '添加购物车商品前检测到未关闭的弹窗');
+
+    const labelText = page.getByText('标签', { exact: true }).first();
+    if (!await labelText.isVisible({ timeout: 15_000 }).catch(() => false)) throw new Error('发布页面没有找到“标签”设置');
+    const field = labelText.locator('xpath=following::*[self::div or self::span][1]');
+    const select = page.locator('.semi-select, [role="combobox"]').filter({ hasText: /位置|购物车|小程序|标记万物/ }).first();
+    if (await select.isVisible().catch(() => false)) await select.click();
+    else await field.click();
+    const cart = page.getByText('购物车', { exact: true }).last();
+    if (!await cart.isVisible({ timeout: 10_000 }).catch(() => false)) throw new Error('标签下拉菜单中没有找到“购物车”');
+    await cart.click();
+
+    const linkInput = page.locator('input[placeholder*="链接"], input:not([type="hidden"])');
+    let targetInput = null;
+    for (let index = 0; index < await linkInput.count(); index += 1) {
+      const candidate = linkInput.nth(index);
+      if (!await candidate.isVisible().catch(() => false)) continue;
+      const value = String(await candidate.inputValue().catch(() => ''));
+      const placeholder = String(await candidate.getAttribute('placeholder') || '');
+      if (/链接|http/i.test(`${value} ${placeholder}`) || !value) { targetInput = candidate; break; }
+    }
+    if (!targetInput) throw new Error('选择购物车后没有找到商品链接输入框');
+    await targetInput.fill(productUrl);
+    const addLink = page.getByText('添加链接', { exact: true }).last();
+    if (!await addLink.isVisible({ timeout: 10_000 }).catch(() => false)) throw new Error('没有找到“添加链接”按钮');
+    await addLink.click();
+
+    const modal = page.locator('[role="dialog"]:visible, .semi-modal-wrap:visible').filter({ hasText: '编辑商品' }).last();
+    if (!await modal.isVisible({ timeout: 20_000 }).catch(() => false)) throw new Error('添加商品链接后没有出现“编辑商品”窗口');
+    const titleInput = modal.locator('input[placeholder*="商品短标题"], input').last();
+    if (!await titleInput.isVisible().catch(() => false)) throw new Error('编辑商品窗口中没有找到商品短标题输入框');
+    await titleInput.fill(shortTitle);
+    const complete = modal.getByRole('button', { name: /完成编辑/ }).first();
+    if (!await complete.isEnabled().catch(() => false)) throw new Error('商品短标题填写后“完成编辑”按钮仍不可用');
+    await complete.click();
+    await modal.waitFor({ state: 'hidden', timeout: 15_000 });
+
+    const body = await page.locator('body').innerText().catch(() => '');
+    if (!body.includes(shortTitle)) throw new Error('商品编辑窗口已关闭，但发布页面没有回显商品短标题');
+  }
+
+  async fillAiDeclaration(page) {
+    await this.assertNoBlockingModal(page, '添加AI自主声明前检测到未关闭的弹窗');
+    const entryPrompt = page.getByText(/请选择自主声明/, { exact: false }).first();
+    const entryLabel = page.getByText('自主声明', { exact: true }).first();
+    if (await entryPrompt.isVisible({ timeout: 10_000 }).catch(() => false)) {
+      await entryPrompt.click({ timeout: 5_000 });
+    } else if (await entryLabel.isVisible().catch(() => false)) {
+      const row = entryLabel.locator('xpath=..');
+      await row.click({ timeout: 5_000 });
+    } else {
+      throw new Error('AI标识已勾选，但发布页面没有找到“自主声明”入口');
+    }
+
+    const modal = page.locator('[role="modal"]:visible, .semi-modal-wrap:visible, .dy-creator-content-modal-wrap:visible')
+      .filter({ hasText: /对作品内容添加声明|请选择声明类型/ }).first();
+    if (!await modal.isVisible({ timeout: 8_000 }).catch(() => false)) {
+      throw new Error('点击“自主声明”后没有打开声明类型窗口');
+    }
+    const optionText = modal.getByText('内容由AI生成', { exact: true }).first();
+    if (!await optionText.isVisible().catch(() => false)) throw new Error('自主声明窗口没有找到“内容由AI生成”选项');
+    const optionRow = optionText.locator('xpath=ancestor::*[self::label or @role="radio"][1]');
+    if (await optionRow.count()) await optionRow.click({ timeout: 5_000 });
+    else await optionText.click({ timeout: 5_000 });
+
+    const confirm = modal.getByRole('button', { name: '确定', exact: true }).first();
+    if (!await confirm.isEnabled({ timeout: 5_000 }).catch(() => false)) {
+      throw new Error('已选择“内容由AI生成”，但声明窗口的“确定”按钮仍不可用');
+    }
+    await confirm.click({ timeout: 5_000 });
+    await modal.waitFor({ state: 'hidden', timeout: 8_000 }).catch(() => {
+      throw new Error('确认AI自主声明后弹窗没有关闭');
+    });
   }
 
   async waitForVideoUploadComplete(page, reporter, label = '') {
@@ -269,6 +487,65 @@ class BrowserManager {
     const uncertain = new Error('已经点击发布，但90秒内没有识别到明确成功或失败结果。禁止再次点击发布，请立即人工检查作品管理');
     uncertain.code = 'PUBLISH_OUTCOME_UNCERTAIN';
     throw uncertain;
+  }
+
+  async verifyScheduledEntry(page, payload) {
+    const manageUrl = 'https://creator.douyin.com/creator-micro/content/manage?enter_from=publish';
+    if (!/\/creator-micro\/(content\/manage|manage)/.test(page.url())) {
+      await page.goto(manageUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+    }
+    const titleNeedle = String(payload.body || '').replace(/\s+/g, '').slice(0, 18);
+    if (!titleNeedle) {
+      const error = new Error('正文为空，无法在作品管理中唯一复核对应视频');
+      error.code = 'PUBLISH_OUTCOME_UNCERTAIN';
+      throw error;
+    }
+    const monthDay = payload.localDate.slice(5);
+    const timeNeedles = [
+      `${payload.localDate} ${payload.localTime}`,
+      `${monthDay} ${payload.localTime}`,
+      payload.localTime
+    ];
+    const deadline = Date.now() + 45_000;
+    let refreshed = false;
+    while (Date.now() < deadline) {
+      this.assertNotCancelled();
+      const visibleText = String(await page.locator('body').innerText().catch(() => ''));
+      const compact = visibleText.replace(/\s+/g, '');
+      const titleMatched = compact.includes(titleNeedle);
+      const timeMatched = timeNeedles.some((needle) => visibleText.includes(needle));
+      if (titleMatched && timeMatched) {
+        const links = page.locator('a[href*="/video/"], a[href*="item_id="], a[href*="itemId="]');
+        let videoUrl = '';
+        for (let index = 0; index < await links.count(); index += 1) {
+          const link = links.nth(index);
+          if (!await link.isVisible().catch(() => false)) continue;
+          const containerText = String(await link.locator('xpath=ancestor::div[1]').innerText().catch(() => ''));
+          if (containerText.replace(/\s+/g, '').includes(titleNeedle)) {
+            videoUrl = String(await link.getAttribute('href') || '');
+            break;
+          }
+        }
+        const videoId = videoUrl.match(/\/video\/(\d+)/)?.[1]
+          || videoUrl.match(/[?&](?:item_id|itemId)=(\d+)/)?.[1]
+          || '';
+        return {
+          detail: `已在作品管理找到文案和时间对应记录：${payload.localDate} ${payload.localTime}`,
+          videoUrl,
+          videoId,
+          matchedTitle: titleNeedle,
+          scheduledLocal: `${payload.localDate} ${payload.localTime}`
+        };
+      }
+      if (!refreshed && Date.now() + 20_000 >= deadline) {
+        refreshed = true;
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => {});
+      }
+      await page.waitForTimeout(1000);
+    }
+    const error = new Error(`平台出现成功提示，但作品管理中未找到文案和时间对应记录：${payload.localDate} ${payload.localTime}`);
+    error.code = 'PUBLISH_OUTCOME_UNCERTAIN';
+    throw error;
   }
 
   async firstVisibleText(page, pattern) {
@@ -358,12 +635,33 @@ class BrowserManager {
     await done.waitFor({ state: 'visible', timeout: 15_000 });
     const deadline = Date.now() + 20_000;
     while (!await done.isEnabled().catch(() => false)) {
-      if (Date.now() >= deadline) throw new Error('竖版和横版封面已上传，但“完成”按钮仍不可用');
+      if (Date.now() >= deadline) throw new Error('竖封面和横封面已上传，但“完成”按钮仍不可用');
       await page.waitForTimeout(300);
     }
     await done.click();
+    const recommendationDismissed = await this.dismissKnownHorizontalRecommendation(page);
     await modal.waitFor({ state: 'hidden', timeout: 15_000 });
     await this.assertNoBlockingModal(page, '封面设置完成后仍有弹窗未关闭');
+    return { recommendationDismissed };
+  }
+
+  async dismissKnownHorizontalRecommendation(page) {
+    const title = page.getByText('设置横封面获取多流量', { exact: true }).last();
+    const detectionDeadline = Date.now() + 3_000;
+    while (!await title.isVisible().catch(() => false)) {
+      if (Date.now() >= detectionDeadline) return false;
+      await page.waitForTimeout(150);
+    }
+    const prompt = title.locator(
+      'xpath=ancestor::*[@role="modal" or contains(@class,"semi-modal-wrap") or contains(@class,"modal")][1]'
+    );
+    if (!await prompt.count()) throw new Error('检测到“设置横封面获取多流量”提示，但无法定位其弹窗范围');
+    const skip = prompt.getByRole('button', { name: '暂不设置', exact: true }).last();
+    await skip.waitFor({ state: 'visible', timeout: 5_000 });
+    if (!await skip.isEnabled().catch(() => false)) throw new Error('“设置横封面获取多流量”弹窗的“暂不设置”按钮不可用');
+    await skip.click();
+    await prompt.waitFor({ state: 'hidden', timeout: 10_000 });
+    return true;
   }
 
   async uploadCoverVariant(page, modal, tabName, coverPath) {

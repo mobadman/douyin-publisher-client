@@ -51,7 +51,6 @@ function normalizeTestPayload(input, now = new Date()) {
     ? validateImageSignature(validateLocalFile(input.coverPath, IMAGE_EXTENSIONS, '封面图片'))
     : null;
   const body = String(input.body || '').trim();
-  if (countChineseCharacters(body) > 20) throw new Error('正文最多包含20个汉字，Tag不计入');
   const tags = normalizeTags(input.tags);
   const scheduledAt = new Date(input.scheduledAt);
   if (Number.isNaN(scheduledAt.getTime())) throw new Error('请选择有效的定时发布时间');

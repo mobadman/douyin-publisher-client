@@ -1,6 +1,9 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('publisher', {
+  listWorkspaces: () => ipcRenderer.invoke('workspaces:list'),
+  selectWorkspace: (workspaceId) => ipcRenderer.invoke('workspace:select', workspaceId),
+  updateWorkspace: (workspaceId, input) => ipcRenderer.invoke('workspace:update', workspaceId, input),
   listAccounts: () => ipcRenderer.invoke('accounts:list'),
   getBrowserStatus: () => ipcRenderer.invoke('browser:status'),
   openBrowser: (accountId) => ipcRenderer.invoke('browser:open', accountId),
@@ -12,6 +15,7 @@ contextBridge.exposeInMainWorld('publisher', {
   chooseVideo: () => ipcRenderer.invoke('file:choose-video'),
   chooseCover: () => ipcRenderer.invoke('file:choose-cover'),
   submitTestPublish: (payload) => ipcRenderer.invoke('test-publish:submit', payload),
+  resolveTestPublishId: (input) => ipcRenderer.invoke('test-publish:resolve-id', input),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (input) => ipcRenderer.invoke('settings:save', input),
   getFeishuBrowserStatus: () => ipcRenderer.invoke('feishu-browser:status'),
@@ -20,10 +24,21 @@ contextBridge.exposeInMainWorld('publisher', {
   closeFeishuBrowser: () => ipcRenderer.invoke('feishu-browser:close'),
   getLibraryPaths: () => ipcRenderer.invoke('library:paths'),
   openLibrary: (key) => ipcRenderer.invoke('library:open', key),
+  listProductMappings: () => ipcRenderer.invoke('product-mapping:list'),
   getCurrentPlan: () => ipcRenderer.invoke('plan:current'),
   getDurationEstimates: () => ipcRenderer.invoke('duration:estimates'),
-  createPlan: (date) => ipcRenderer.invoke('plan:create', date),
+  createPlan: (date, filterMode = 'auto') => ipcRenderer.invoke('plan:create', { date, filterMode }),
+  prepareCommercePlan: () => ipcRenderer.invoke('plan:prepare-commerce'),
+  updatePlanItem: (itemId, input) => ipcRenderer.invoke('plan:update-item', itemId, input),
+  setPlanSelection: (itemIds, selected) => ipcRenderer.invoke('plan:set-selection', itemIds, selected),
+  confirmUncertain: (itemId, published) => ipcRenderer.invoke('plan:confirm-uncertain', itemId, published),
+  choosePlanCover: () => ipcRenderer.invoke('plan:choose-cover'),
+  exportPlanIds: () => ipcRenderer.invoke('plan:export-ids'),
+  copyPlanIdTable: () => ipcRenderer.invoke('plan:copy-id-table'),
+  syncPlanIds: () => ipcRenderer.invoke('plan:sync-ids'),
+  openIdRecords: () => ipcRenderer.invoke('plan:open-id-records'),
   executePlan: () => ipcRenderer.invoke('plan:execute'),
   clearCache: () => ipcRenderer.invoke('cache:clear'),
-  onAutomationTakeover: (callback) => ipcRenderer.on('automation:takeover', (_event, kind) => callback(kind))
+  onAutomationTakeover: (callback) => ipcRenderer.on('automation:takeover', (_event, kind) => callback(kind)),
+  onPlanItemState: (callback) => ipcRenderer.on('plan:item-state', (_event, value) => callback(value))
 });

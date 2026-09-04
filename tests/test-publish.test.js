@@ -35,16 +35,18 @@ test('测试任务校验本地文件和未来时间', () => {
   assert.deepEqual(result.tags, ['产品', '品类']);
 });
 
-test('正文超过20个汉字会在打开网页前中止', () => {
+test('正文超过20个汉字仍然允许发布', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'douyin-test-publish-'));
   const videoPath = path.join(root, 'video.mp4');
   fs.writeFileSync(videoPath, 'video');
-  assert.throws(() => normalizeTestPayload({
+  const body = '这是一个明显超过二十个汉字限制的测试发布正文内容';
+  const result = normalizeTestPayload({
     videoPath,
-    body: '这是一个明显超过二十个汉字限制的测试发布正文内容',
+    body,
     tags: '',
     scheduledAt: '2026-08-20T12:30:00+08:00'
-  }, new Date('2026-08-19T10:00:00+08:00')), /最多包含20个汉字/);
+  }, new Date('2026-08-19T10:00:00+08:00'));
+  assert.equal(result.body, body);
 });
 
 test('封面扩展名与真实格式不一致时中止', () => {

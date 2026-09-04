@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { validateFeishuUrl } = require('./workspace-store');
 
 const DEFAULT_CONFIG = {
   sheetUrl: 'https://c5z4rfm2f3.feishu.cn/sheets/APM9sG44HhmTZTt3AR1cWnbunMd?sheet=mlxXMF',
@@ -11,7 +12,8 @@ const DEFAULT_CONFIG = {
     category: '产品类目',
     model: '产品型号',
     publishDate: '发布时间',
-    allowPublish: '允许发布'
+    allowPublish: '允许发布',
+    aiGenerated: 'AI标识'
   }
 };
 
@@ -59,16 +61,7 @@ class ConfigStore {
 
   save(input) {
     const current = this.read();
-    const sheetUrl = String(input.sheetUrl || '').trim();
-    let url;
-    try {
-      url = new URL(sheetUrl);
-    } catch {
-      throw new Error('飞书表格链接格式不正确');
-    }
-    if (url.protocol !== 'https:' || !/\.feishu\.cn$/i.test(url.hostname) || !/\/sheets\//.test(url.pathname)) {
-      throw new Error('请填写以 https:// 开头的飞书电子表格链接');
-    }
+    const sheetUrl = validateFeishuUrl(input.sheetUrl || current.sheetUrl);
     const guardSeconds = Number(input.guardSeconds ?? current.guardSeconds);
     if (!Number.isFinite(guardSeconds) || guardSeconds < 1 || guardSeconds > 10) {
       throw new Error('防误操时长必须是1到10秒');

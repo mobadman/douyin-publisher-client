@@ -2,8 +2,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const DEFAULT_ACCOUNTS = [
-  { id: 'test-account', label: '测试小号', role: 'test' },
-  { id: 'production-account', label: '发布账号', role: 'production' }
+  { id: 'test-account', label: '抖音测试小号', role: 'test', platform: 'douyin', surface: 'creator' },
+  { id: 'production-account', label: '抖音主页发布号', role: 'production', platform: 'douyin', surface: 'creator' },
+  { id: 'wechat-test', label: '视频号测试账号', role: 'test', platform: 'wechat-channels', surface: 'creator' },
+  { id: 'wechat-publisher', label: '微信视频号', role: 'production', platform: 'wechat-channels', surface: 'creator' }
 ];
 
 class AccountStore {
@@ -30,6 +32,25 @@ class AccountStore {
           account.label = '发布账号';
           changed = true;
         }
+        if ((account.id === 'commerce-publisher' || account.id === 'commerce-shop') && !account.hidden) {
+          account.hidden = true;
+          changed = true;
+        }
+      }
+      const now = new Date().toISOString();
+      for (const defaults of DEFAULT_ACCOUNTS) {
+        const existing = accounts.find((account) => account.id === defaults.id);
+        if (!existing) {
+          accounts.push({ ...defaults, createdAt: now, lastDetected: null });
+          changed = true;
+          continue;
+        }
+        for (const key of ['platform', 'surface', 'role']) {
+          if (!existing[key]) {
+            existing[key] = defaults[key];
+            changed = true;
+          }
+        }
       }
       if (changed) this.write(accounts);
     }
@@ -50,7 +71,7 @@ class AccountStore {
   }
 
   list() {
-    return this.read().map((account) => this.withPath(account));
+    return this.read().filter((account) => !account.hidden).map((account) => this.withPath(account));
   }
 
   get(id) {
@@ -103,7 +124,7 @@ class AccountStore {
   withPath(account) {
     return {
       ...account,
-      profilePath: path.join(this.profilesRoot, account.id)
+      profilePath: path.join(this.profilesRoot, account.platform || 'douyin', account.id)
     };
   }
 }

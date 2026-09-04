@@ -1,12 +1,18 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { _electron: electron } = require('playwright');
 
 (async () => {
   const root = path.join(__dirname, '..');
-  const executablePath = process.env.SMOKE_EXECUTABLE || undefined;
-  const application = await electron.launch({ args: executablePath ? [] : ['.'], cwd: root, executablePath });
+  const executablePath = process.argv[2] || process.env.SMOKE_EXECUTABLE || undefined;
+  const smokeUserData = fs.mkdtempSync(path.join(os.tmpdir(), 'douyin-publisher-ui-smoke-'));
+  const application = await electron.launch({
+    args: ['.', `--user-data-dir=${smokeUserData}`, '--disable-gpu'],
+    cwd: root,
+    executablePath
+  });
   const page = await application.firstWindow();
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -22,11 +28,23 @@ const { _electron: electron } = require('playwright');
     };
     throw new Error(`账号模块没有渲染：${JSON.stringify(diagnostic)}`);
   }
-  assert.equal(await page.locator('[data-page]').count(), 4);
+  assert.equal(await page.locator('[data-page]').count(), 3);
   await page.locator('[data-page="main"]').click();
   assert.equal(await page.locator('[data-page-panel="main"].active').count(), 1);
   assert.equal(await page.locator('[data-page-panel="main"] #accounts-test').count(), 0);
   assert.match(await page.locator('#accounts-main').innerText(), /发布账号/);
+  assert.equal(await page.locator('#workspace-select option').count(), 3);
+  assert.equal(await page.locator('#accounts-main .card').count(), 1);
+  assert.equal(await page.locator('#create-plan').count(), 0);
+  assert.equal(await page.locator('#create-plan-current-filter').count(), 1);
+  assert.equal(await page.locator('#copy-id-table').count(), 1);
+  const firstEdit = page.locator('[data-plan-edit]').first();
+  if (await firstEdit.count() && await firstEdit.isEnabled()) {
+    await firstEdit.click();
+    assert.equal(await page.locator('#edit-plan-category').isVisible(), true);
+    assert.equal(await page.locator('#edit-plan-model').isVisible(), true);
+    await page.locator('#edit-plan-modal [data-close-modal]').first().click();
+  }
   if (process.env.SMOKE_SCREENSHOT_DIR) {
     fs.mkdirSync(process.env.SMOKE_SCREENSHOT_DIR, { recursive: true });
     await page.screenshot({ path: path.join(process.env.SMOKE_SCREENSHOT_DIR, 'main.png'), fullPage: true });
@@ -34,9 +52,18 @@ const { _electron: electron } = require('playwright');
   await page.locator('[data-page="test"]').click();
   assert.equal(await page.getByRole('heading', { name: '测试工具' }).isVisible(), true);
   assert.match(await page.locator('#accounts-test').innerText(), /测试小号/);
+  assert.equal(await page.locator('#test-platform option').count(), 2);
+  assert.equal(await page.locator('#test-resolve-id').isVisible(), true);
+  await page.locator('#test-platform').selectOption('wechat-channels');
+  assert.match(await page.locator('#accounts-test').innerText(), /视频号测试账号/);
+  assert.equal(await page.locator('#test-resolve-id').isHidden(), true);
+  await page.locator('#test-platform').selectOption('douyin');
+  if (process.env.SMOKE_SCREENSHOT_DIR) {
+    await page.screenshot({ path: path.join(process.env.SMOKE_SCREENSHOT_DIR, 'test-tools.png'), fullPage: true });
+  }
   await page.locator('[data-page="settings"]').click();
   assert.equal(await page.locator('#guard-seconds').isVisible(), true);
-  assert.equal(await page.locator('#settings-accounts .account-settings-card').count(), 2);
+  assert.equal(await page.locator('#settings-accounts .account-settings-card').count(), 4);
   assert.equal(await page.locator('#open-donation').isVisible(), true);
   const deletableCard = page.locator('#settings-accounts .account-settings-card').filter({ has: page.locator('[data-settings-account-action="delete"]:not([disabled])') }).first();
   if (await deletableCard.count()) {

@@ -53,6 +53,38 @@ internal static class FileDialogHelper
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint inputCount, INPUT[] inputs, int inputSize);
 
+    private delegate bool EnumWindowProc(IntPtr windowHandle, IntPtr parameter);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumChildWindows(IntPtr parent, EnumWindowProc callback, IntPtr parameter);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowProc callback, IntPtr parameter);
+
+    [DllImport("user32.dll")]
+    private static extern int GetDlgCtrlID(IntPtr windowHandle);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetParent(IntPtr windowHandle);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr windowHandle);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowEnabled(IntPtr windowHandle);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr windowHandle, out RECT rectangle);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SetFocus(IntPtr windowHandle);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr SendMessage(IntPtr windowHandle, uint message, IntPtr wordParameter, string longParameter);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr windowHandle, uint message, IntPtr wordParameter, IntPtr longParameter);
+
     private const uint MouseLeftDown = 0x0002;
     private const uint MouseLeftUp = 0x0004;
     private const uint InputMouse = 0;
@@ -65,6 +97,17 @@ internal static class FileDialogHelper
     private const byte VirtualL = 0x4c;
     private const byte VirtualN = 0x4e;
     private const byte VirtualEnter = 0x0d;
+    private const uint WindowSetText = 0x000c;
+    private const uint ButtonClick = 0x00f5;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct INPUT
@@ -125,8 +168,8 @@ internal static class FileDialogHelper
             if (args.Length >= 1 && string.Equals(args[0], "inspect-dialog", StringComparison.OrdinalIgnoreCase))
             {
                 int inspectTimeout = args.Length >= 2 ? ParseTimeout(args[1]) : 5000;
-                AutomationElement inspected = WaitForChromeFileDialog(inspectTimeout);
-                WriteResult(true, "已识别 Chrome 标准文件选择窗口、文件名输入框和打开按钮", null);
+                IntPtr inspected = WaitForForegroundOpenDialog(inspectTimeout);
+                WriteResult(true, InspectNativeDialog(inspected), null);
                 return 0;
             }
             if (args.Length >= 2 && string.Equals(args[0], "select-open-dialog", StringComparison.OrdinalIgnoreCase))
@@ -134,31 +177,8 @@ internal static class FileDialogHelper
                 string existingFilePath = Path.GetFullPath(args[1]);
                 int existingTimeout = args.Length >= 3 ? ParseTimeout(args[2]) : DefaultTimeoutMilliseconds;
                 ValidateImage(existingFilePath);
-                IntPtr foregroundDialog = IntPtr.Zero;
-                AutomationElement existingDialog = null;
-                try
-                {
-                    foregroundDialog = WaitForForegroundOpenDialog(Math.Min(existingTimeout, 1500));
-                    existingDialog = AutomationElement.FromHandle(foregroundDialog);
-                }
-                catch (ElementNotAvailableException) { }
-                catch (ArgumentException) { }
-                catch (TimeoutException) { }
-                if (existingDialog == null || FindFileNameElement(existingDialog) == null || FindOpenButton(existingDialog) == null)
-                {
-                    existingDialog = WaitForChromeFileDialog(existingTimeout);
-                    foregroundDialog = new IntPtr(existingDialog.Current.NativeWindowHandle);
-                }
-                if (existingDialog != null && FindFileNameElement(existingDialog) != null && FindOpenButton(existingDialog) != null)
-                {
-                    SetFileName(existingDialog, existingFilePath);
-                    InvokeOpen(existingDialog);
-                    WaitForDialogClosed(existingDialog, existingTimeout);
-                }
-                else
-                {
-                    SetFullPathAndOpenWithKeyboard(foregroundDialog, existingFilePath, existingTimeout);
-                }
+                IntPtr foregroundDialog = WaitForForegroundOpenDialog(existingTimeout);
+                SetFileNameAndOpenNative(foregroundDialog, existingFilePath, existingTimeout);
                 WriteResult(true, "现有标准文件选择窗口已完成", existingFilePath);
                 return 0;
             }
@@ -448,18 +468,175 @@ internal static class FileDialogHelper
                 string title = ReadWindowText(foreground);
                 string className = ReadWindowClass(foreground);
                 lastObserved = "标题=" + (string.IsNullOrWhiteSpace(title) ? "空" : title) + "，窗口类=" + className;
-                string normalizedTitle = (title ?? string.Empty).Replace("&", string.Empty).Trim();
-                if (normalizedTitle.Equals("打开", StringComparison.OrdinalIgnoreCase)
-                    || normalizedTitle.StartsWith("打开 ", StringComparison.OrdinalIgnoreCase)
-                    || normalizedTitle.Equals("Open", StringComparison.OrdinalIgnoreCase)
-                    || normalizedTitle.StartsWith("Open ", StringComparison.OrdinalIgnoreCase))
-                {
-                    return foreground;
-                }
+                if (IsNativeOpenDialog(foreground)) return foreground;
             }
+            List<IntPtr> candidates = new List<IntPtr>();
+            EnumWindows(delegate(IntPtr windowHandle, IntPtr parameter)
+            {
+                if (IsWindowVisible(windowHandle) && IsWindowEnabled(windowHandle) && IsNativeOpenDialog(windowHandle))
+                {
+                    candidates.Add(windowHandle);
+                }
+                return true;
+            }, IntPtr.Zero);
+            if (candidates.Count == 1) return candidates[0];
+            if (candidates.Count > 1) throw new InvalidOperationException("检测到多个Windows标准“打开”对话框，无法安全判断目标窗口");
             Thread.Sleep(100);
         }
         throw new TimeoutException("文件选择窗口已经由网页触发，但前台窗口不是 Windows 标准“打开”对话框。观察结果：" + lastObserved);
+    }
+
+    private static bool IsNativeOpenDialog(IntPtr windowHandle)
+    {
+        if (!string.Equals(ReadWindowClass(windowHandle), "#32770", StringComparison.Ordinal)) return false;
+        string title = ReadWindowText(windowHandle).Replace("&", string.Empty).Trim();
+        return title.Equals("打开", StringComparison.OrdinalIgnoreCase)
+            || title.StartsWith("打开 ", StringComparison.OrdinalIgnoreCase)
+            || title.Equals("Open", StringComparison.OrdinalIgnoreCase)
+            || title.StartsWith("Open ", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string InspectNativeDialog(IntPtr dialogWindow)
+    {
+        IntPtr fileName = FindNativeFileNameEdit(dialogWindow);
+        IntPtr openButton = FindNativeOpenButton(dialogWindow);
+        return "已识别 Windows 标准“打开”对话框；文件名=" + DescribeNativeControl(fileName)
+            + "；打开=" + DescribeNativeControl(openButton);
+    }
+
+    private static string DescribeNativeControl(IntPtr windowHandle)
+    {
+        if (windowHandle == IntPtr.Zero) return "未找到";
+        RECT bounds;
+        GetWindowRect(windowHandle, out bounds);
+        return "类=" + ReadWindowClass(windowHandle)
+            + "，ID=" + GetDlgCtrlID(windowHandle)
+            + "，文字=" + ReadWindowText(windowHandle)
+            + "，范围=" + bounds.Left + "," + bounds.Top + "," + (bounds.Right - bounds.Left) + "," + (bounds.Bottom - bounds.Top);
+    }
+
+    private static List<IntPtr> EnumerateNativeChildren(IntPtr parent)
+    {
+        List<IntPtr> children = new List<IntPtr>();
+        EnumChildWindows(parent, delegate(IntPtr child, IntPtr parameter)
+        {
+            children.Add(child);
+            return true;
+        }, IntPtr.Zero);
+        return children;
+    }
+
+    private static bool HasAncestorControlId(IntPtr windowHandle, IntPtr dialogWindow, int expectedId)
+    {
+        IntPtr current = windowHandle;
+        for (int level = 0; level < 8 && current != IntPtr.Zero && current != dialogWindow; level++)
+        {
+            if (GetDlgCtrlID(current) == expectedId) return true;
+            current = GetParent(current);
+        }
+        return false;
+    }
+
+    private static IntPtr FindNativeFileNameEdit(IntPtr dialogWindow)
+    {
+        RECT dialogBounds;
+        GetWindowRect(dialogWindow, out dialogBounds);
+        IntPtr best = IntPtr.Zero;
+        long bestScore = long.MinValue;
+        foreach (IntPtr child in EnumerateNativeChildren(dialogWindow))
+        {
+            if (!IsWindowVisible(child) || !IsWindowEnabled(child)) continue;
+            if (!string.Equals(ReadWindowClass(child), "Edit", StringComparison.OrdinalIgnoreCase)) continue;
+            RECT bounds;
+            if (!GetWindowRect(child, out bounds)) continue;
+            int width = bounds.Right - bounds.Left;
+            int height = bounds.Bottom - bounds.Top;
+            if (width < 80 || height < 12) continue;
+            long score = width * 100L + Math.Max(0, bounds.Top - dialogBounds.Top);
+            if (GetDlgCtrlID(child) == 1148) score += 1000000L;
+            else if (HasAncestorControlId(child, dialogWindow, 1148)) score += 500000L;
+            if (score <= bestScore) continue;
+            best = child;
+            bestScore = score;
+        }
+        return best;
+    }
+
+    private static IntPtr FindNativeOpenButton(IntPtr dialogWindow)
+    {
+        IntPtr named = IntPtr.Zero;
+        foreach (IntPtr child in EnumerateNativeChildren(dialogWindow))
+        {
+            if (!IsWindowVisible(child) || !IsWindowEnabled(child)) continue;
+            if (!string.Equals(ReadWindowClass(child), "Button", StringComparison.OrdinalIgnoreCase)) continue;
+            if (GetDlgCtrlID(child) == 1) return child;
+            string name = ReadWindowText(child).Replace("&", string.Empty).Trim();
+            if (name.StartsWith("打开", StringComparison.OrdinalIgnoreCase)
+                || name.StartsWith("Open", StringComparison.OrdinalIgnoreCase)) named = child;
+        }
+        return named;
+    }
+
+    private static void SetFileNameAndOpenNative(IntPtr dialogWindow, string filePath, int timeout)
+    {
+        IntPtr fileName = IntPtr.Zero;
+        IntPtr openButton = IntPtr.Zero;
+        Stopwatch controlsTimer = Stopwatch.StartNew();
+        while (controlsTimer.ElapsedMilliseconds < timeout)
+        {
+            if (!IsWindow(dialogWindow)) throw new InvalidOperationException("等待文件名输入框时Windows文件选择窗口已经关闭");
+            fileName = FindNativeFileNameEdit(dialogWindow);
+            openButton = FindNativeOpenButton(dialogWindow);
+            if (fileName != IntPtr.Zero && openButton != IntPtr.Zero) break;
+            Thread.Sleep(100);
+        }
+        if (fileName == IntPtr.Zero || openButton == IntPtr.Zero)
+        {
+            throw new TimeoutException("Windows标准“打开”对话框已经出现，但等待原生“文件名”输入框和“打开”按钮超时；"
+                + InspectNativeDialog(dialogWindow));
+        }
+
+        ForceForegroundWindow(dialogWindow);
+        if (GetForegroundWindow() != dialogWindow) throw new InvalidOperationException("无法激活Windows标准“打开”对话框");
+        AutomationElement fileNameElement = AutomationElement.FromHandle(fileName);
+        object valuePatternObject;
+        if (!fileNameElement.TryGetCurrentPattern(ValuePattern.Pattern, out valuePatternObject))
+        {
+            throw new InvalidOperationException("已定位原生“文件名”输入框，但该控件不支持写入");
+        }
+        ValuePattern valuePattern = (ValuePattern)valuePatternObject;
+        fileNameElement.SetFocus();
+        valuePattern.SetValue(filePath);
+        string actual = valuePattern.Current.Value;
+        if (!string.Equals(actual, filePath, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("完整封面路径写入“文件名”输入框后回读不一致；实际为“" + actual + "”");
+        }
+        AutomationElement openButtonElement = AutomationElement.FromHandle(openButton);
+        object invokePatternObject;
+        if (openButtonElement.TryGetCurrentPattern(InvokePattern.Pattern, out invokePatternObject))
+        {
+            ((InvokePattern)invokePatternObject).Invoke();
+        }
+        else
+        {
+            // 部分 Windows 文件对话框虽然提供了原生 Button 句柄，却不通过
+            // UI Automation 暴露 InvokePattern。此时直接向已经核验过的按钮
+            // 发送 BM_CLICK，避免同一安装包在不同 Windows 环境中表现不一致。
+            SendMessage(openButton, ButtonClick, IntPtr.Zero, IntPtr.Zero);
+        }
+        WaitForNativeDialogClosed(dialogWindow, timeout);
+    }
+
+    private static void WaitForNativeDialogClosed(IntPtr dialogWindow, int timeout)
+    {
+        Stopwatch timer = Stopwatch.StartNew();
+        while (timer.ElapsedMilliseconds < timeout)
+        {
+            if (!IsWindow(dialogWindow)) return;
+            Thread.Sleep(100);
+        }
+        throw new TimeoutException("已经写入完整封面路径并点击“打开”，但Windows文件选择窗口没有关闭");
     }
 
     private static string ReadWindowText(IntPtr windowHandle)
@@ -776,11 +953,18 @@ internal static class FileDialogHelper
         AutomationElement button = FindOpenButton(dialog);
         if (button == null) throw new InvalidOperationException("文件选择窗口中没有找到“打开”按钮");
         object pattern;
-        if (!button.TryGetCurrentPattern(InvokePattern.Pattern, out pattern))
+        if (button.TryGetCurrentPattern(InvokePattern.Pattern, out pattern))
         {
-            throw new InvalidOperationException("文件选择窗口的“打开”按钮不可调用");
+            ((InvokePattern)pattern).Invoke();
+            return;
         }
-        ((InvokePattern)pattern).Invoke();
+        IntPtr handle = new IntPtr(button.Current.NativeWindowHandle);
+        if (handle != IntPtr.Zero && IsWindow(handle))
+        {
+            SendMessage(handle, ButtonClick, IntPtr.Zero, IntPtr.Zero);
+            return;
+        }
+        throw new InvalidOperationException("文件选择窗口的“打开”按钮既不支持UI Automation调用，也没有可用的原生按钮句柄");
     }
 
     private static void WaitForDialogClosed(AutomationElement dialog, int timeout)

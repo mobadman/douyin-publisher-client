@@ -1,15 +1,32 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { FeishuService, parseSheetUrl, parseTsv, extractHttps, columnName } = require('../src/feishu-service');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { FeishuService, parseSheetUrl, parseTsv, extractHttps, columnName, isAiMarked } = require('../src/feishu-service');
 
 const columns = {
-  material: '素材链接', category: '产品类目', model: '产品型号', publishDate: '发布时间', allowPublish: '允许发布'
+  material: '素材链接', category: '产品类目', model: '产品型号', publishDate: '发布时间', allowPublish: '允许发布', aiGenerated: 'AI标识'
 };
 
 test('从飞书链接解析表格和工作表标识', () => {
   assert.deepEqual(
     parseSheetUrl('https://example.feishu.cn/sheets/abcDEF123?sheet=mlxXMF'),
-    { spreadsheetToken: 'abcDEF123', sheetId: 'mlxXMF' }
+    { spreadsheetToken: 'abcDEF123', sheetId: 'mlxXMF', sourceType: 'sheets' }
+  );
+});
+
+test('飞书知识库中的电子表格链接也可解析', () => {
+  assert.deepEqual(
+    parseSheetUrl('https://example.feishu.cn/wiki/Pj1Vw2rwziqlOmkYJAmc1RO2nJc?sheet=t00WHd'),
+    { spreadsheetToken: 'Pj1Vw2rwziqlOmkYJAmc1RO2nJc', sheetId: 't00WHd', sourceType: 'wiki' }
+  );
+});
+
+test('知识库表格节点直链不要求额外的sheet参数', () => {
+  assert.deepEqual(
+    parseSheetUrl('https://example.feishu.cn/wiki/YoC3w8eOFi9iQikhhkxcOXsanbc'),
+    { spreadsheetToken: 'YoC3w8eOFi9iQikhhkxcOXsanbc', sheetId: null, sourceType: 'wiki' }
   );
 });
 
@@ -22,10 +39,10 @@ test('解析飞书复制出的制表符数据和带换行的引号字段', () =>
 
 test('按日期读取并在允许发布列存在时过滤', async () => {
   const copied = [
-    '素材链接\t产品类目\t产品型号\t发布时间\t允许发布',
-    'https://example.com/a.mp4\t冰箱\tA\t2026/8/21\t是',
-    'https://example.com/b.mp4\t洗衣机\tB\t2026/8/21\t否',
-    'https://example.com/c.mp4\t空调\tC\t2026/8/22\t是'
+    '素材链接\t产品类目\t产品型号\t发布时间\t允许发布\tAI标识',
+    'https://example.com/a.mp4\t冰箱\tA\t2026/8/21\t是\tTRUE',
+    'https://example.com/b.mp4\t洗衣机\tB\t2026/8/21\t否\tFALSE',
+    'https://example.com/c.mp4\t空调\tC\t2026/8/22\t是\tFALSE'
   ].join('\n');
   const browser = { copySheet: async () => copied };
   const service = new FeishuService(browser);
@@ -34,7 +51,17 @@ test('按日期读取并在允许发布列存在时过滤', async () => {
   }, '2026-08-21');
   assert.equal(result.rows.length, 1);
   assert.equal(result.rows[0].model, 'A');
+  assert.equal(result.rows[0].aiGenerated, true);
   assert.equal(result.allowColumnExists, true);
+  assert.equal(result.aiColumnExists, true);
+});
+
+test('AI标识兼容飞书复选框和常用人工标记', () => {
+  assert.equal(isAiMarked('TRUE'), true);
+  assert.equal(isAiMarked('☑'), true);
+  assert.equal(isAiMarked('内容由AI生成'), true);
+  assert.equal(isAiMarked('FALSE'), false);
+  assert.equal(isAiMarked(''), false);
 });
 
 test('素材单元格复制为文件名时记录附件单元格而不要求网址', async () => {
@@ -47,4 +74,22 @@ test('素材单元格复制为文件名时记录附件单元格而不要求网�
   assert.equal(result.rows[0].materialText, '视频文件');
   assert.equal(result.rows[0].materialCell, 'A2');
   assert.deepEqual(result.rows[0].sourceMissing, []);
+});
+
+test('下载附件后把飞书实际单元格行号写回计划数据', async () => {
+  const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'feishu-actual-row-'));
+  const browser = {
+    downloadAttachment: async (_sheetUrl, _cell, outputPath) => {
+      fs.writeFileSync(outputPath, 'video');
+      return { outputPath, actualCell: 'C1737' };
+    }
+  };
+  const service = new FeishuService(browser);
+  const item = {
+    sourceRow: 2, materialLink: '', materialText: '原素材.mp4', materialCell: 'C2',
+    sourceSheetUrl: 'https://example.feishu.cn/sheets/token?sheet=sheet1', model: 'A'
+  };
+  await service.downloadMaterial(item, cacheRoot);
+  assert.equal(item.actualMaterialCell, 'C1737');
+  assert.equal(item.actualSourceRow, 1737);
 });

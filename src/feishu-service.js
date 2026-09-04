@@ -10,14 +10,19 @@ function parseSheetUrl(value) {
   } catch {
     throw new Error('飞书表格链接格式不正确');
   }
-  const match = url.pathname.match(/\/sheets\/([^/?#]+)/);
+  const match = url.pathname.match(/\/(sheets|wiki)\/([^/?#]+)/);
   const sheetId = url.searchParams.get('sheet');
-  if (!match || !sheetId) throw new Error('飞书链接中缺少电子表格 token 或 sheet 参数');
-  return { spreadsheetToken: match[1], sheetId };
+  if (!match) throw new Error('飞书链接中缺少电子表格或知识库 token');
+  if (match[1] === 'sheets' && !sheetId) throw new Error('飞书电子表格链接缺少 sheet 参数');
+  return { spreadsheetToken: match[2], sheetId: sheetId || null, sourceType: match[1] };
 }
 
 function cellText(value) {
   return String(value ?? '').trim();
+}
+
+function isAiMarked(value) {
+  return /^(是|AI|AI生成|内容由AI生成|true|1|yes|√|☑|已勾选|checked)$/i.test(cellText(value));
 }
 
 function parseTsv(value) {
@@ -74,11 +79,16 @@ class FeishuService {
     this.browserManager = browserManager;
   }
 
-  async rowsForDate(settings, targetDate) {
+  async rowsForDate(settings, targetDate, options = {}) {
     parseSheetUrl(settings.sheetUrl);
     const required = settings.columns;
     const requiredHeaders = [required.material, required.category, required.model, required.publishDate];
-    const copied = await this.browserManager.copySheet(settings.sheetUrl, requiredHeaders);
+    const filterMode = options.filterMode === 'current' ? 'current' : 'auto';
+    const copied = await this.browserManager.copySheet(settings.sheetUrl, requiredHeaders, {
+      filterMode,
+      targetDate,
+      publishDateHeader: required.publishDate
+    });
     const values = parseTsv(copied);
     if (!values.length) throw new Error('从飞书表格复制到的数据为空');
 
@@ -91,6 +101,7 @@ class FeishuService {
     }
 
     const allowColumnExists = indexes.allowPublish >= 0;
+    const aiColumnExists = indexes.aiGenerated >= 0;
     const rows = [];
     for (let index = headerRowIndex + 1; index < values.length; index += 1) {
       const row = values[index] || [];
@@ -105,6 +116,7 @@ class FeishuService {
         sourceSheetUrl: settings.sheetUrl,
         category: cellText(row[indexes.category]),
         model: cellText(row[indexes.model]),
+        aiGenerated: aiColumnExists && isAiMarked(row[indexes.aiGenerated]),
         publishDate: targetDate
       };
       const missing = [];
@@ -114,7 +126,7 @@ class FeishuService {
       item.sourceMissing = missing;
       rows.push(item);
     }
-    return { rows, allowColumnExists };
+    return { rows, allowColumnExists, aiColumnExists, filterMode };
   }
 
   async downloadMaterial(item, cacheRoot) {
@@ -124,17 +136,27 @@ class FeishuService {
     const extension = ['.mp4', '.mov', '.m4v', '.webm'].includes(sourceExtension) ? sourceExtension : '.mp4';
     const fileName = `${String(item.sourceRow).padStart(4, '0')}-${safeName(item.model, '未命名产品')}${extension}`;
     const outputPath = path.join(cacheRoot, fileName);
-    if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 0) return outputPath;
+    if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 0) {
+      if (!item.actualMaterialCell && !item.materialLink && this.browserManager.resolveAttachmentCell) {
+        item.actualMaterialCell = await this.browserManager.resolveAttachmentCell(
+          item.sourceSheetUrl, item.materialCell, item.materialText
+        );
+        item.actualSourceRow = Number(String(item.actualMaterialCell).replace(/^[A-Z]+/, '')) || null;
+      }
+      return outputPath;
+    }
     const temporary = `${outputPath}.part`;
     if (item.materialLink) {
       await this.browserManager.download(item.materialLink, temporary);
     } else {
-      await this.browserManager.downloadAttachment(
+      const attachment = await this.browserManager.downloadAttachment(
         item.sourceSheetUrl,
         item.materialCell,
         temporary,
         item.materialText
       );
+      item.actualMaterialCell = attachment?.actualCell || '';
+      item.actualSourceRow = Number(String(item.actualMaterialCell).replace(/^[A-Z]+/, '')) || null;
     }
     if (!fs.existsSync(temporary) || fs.statSync(temporary).size === 0) throw new Error(`第${item.sourceRow}行素材下载后为空文件`);
     fs.renameSync(temporary, outputPath);
@@ -142,4 +164,4 @@ class FeishuService {
   }
 }
 
-module.exports = { FeishuService, parseSheetUrl, cellText, parseTsv, extractHttps, columnName };
+module.exports = { FeishuService, parseSheetUrl, cellText, parseTsv, extractHttps, columnName, isAiMarked };

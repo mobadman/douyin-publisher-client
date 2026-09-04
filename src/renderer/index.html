@@ -4,61 +4,77 @@
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>抖音批量发布助手</title>
+  <title>短视频批量发布助手</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div class="app-shell">
     <aside>
-      <div class="brand"><span>短视频工具</span><strong>抖音批量发布助手</strong><small>正式版 1.1.0</small></div>
-      <nav><button data-page="main" class="nav-button active">主工作台</button><button data-page="test" class="nav-button">测试工具</button><button data-page="guide" class="nav-button">新手指引</button><button data-page="settings" class="nav-button">设置</button></nav>
+      <div class="brand"><span>短视频工具</span><strong>短视频批量发布助手</strong><small>开发版 3.0.5</small></div>
+      <nav><button data-page="main" class="nav-button active">主工作台</button><button data-page="test" class="nav-button">测试工具</button><button data-page="settings" class="nav-button">设置</button></nav>
       <div class="side-status"><strong>当前状态</strong><span id="global-status">正在读取本地配置…</span></div>
       <div class="side-author">作者 SquiD</div>
     </aside>
     <main>
       <section class="page active" data-page-panel="main">
-        <header><div><p class="eyebrow">正式发布</p><h1>主工作台</h1></div><span class="badge danger-badge">正式账号</span></header>
+        <header><div><p class="eyebrow">正式发布</p><h1>主工作台</h1></div><span id="workspace-badge" class="badge danger-badge">正在读取工作区</span></header>
+        <section class="panel workspace-panel">
+          <div class="section-head"><div><p class="eyebrow">启动上下文</p><h2>发布工作区</h2></div><span id="workspace-platform" class="badge"></span></div>
+          <p class="panel-note">每个工作区固定发布平台、账号、飞书表格和本地素材库。生成计划后，本批次工作区与账号不可更换。</p>
+          <div class="workspace-controls"><label class="field compact"><span>当前工作区</span><select id="workspace-select"></select></label><button id="select-workspace" class="secondary">切换工作区</button><span id="workspace-status"></span></div>
+        </section>
         <section id="accounts-main" class="accounts one-column" aria-live="polite"></section>
         <section class="panel">
           <div class="section-head"><div><p class="eyebrow">本地素材库</p><h2>发布配置</h2></div><button type="button" class="secondary" data-library="root">打开总目录</button></div>
           <p class="panel-note">本地配置发布封面、文案、Tag信息。</p>
-          <div class="button-row"><button data-library="covers">封面目录</button><button data-library="copy">文案目录</button><button data-library="tags">Tag目录</button><button class="secondary" data-library="cache">下载缓存</button><button class="secondary" data-library="logs">发布日志</button></div>
+          <div class="button-row"><button data-library="covers">封面目录</button><button data-library="copy">文案目录</button><button data-library="tags">Tag目录</button><button id="open-short-titles" data-library="shortTitles">商品短标题目录</button><button class="secondary" data-library="cache">下载缓存</button><button class="secondary" data-library="logs">发布日志</button></div>
+        </section>
+        <section id="commerce-panel" class="panel" hidden>
+          <div class="section-head"><div><p class="eyebrow">当前批次现场查询</p><h2>商城挂车配置</h2></div><span class="badge danger-badge">每条默认挂车</span></div>
+          <p class="panel-note">在本地 CSV 中维护“飞书产品型号 → 抖店搜索型号”。生成计划后，软件用同一个抖音账号现场打开抖店查询，只把本次结果写入当前计划，不长期保存商品链接。</p>
+          <div class="button-row"><button data-library="productConfig">打开产品型号映射表</button><button id="prepare-commerce" class="secondary">现场获取本批商品链接</button><span id="commerce-status"></span></div>
+          <div id="mapping-list" class="mapping-list"></div>
         </section>
         <section class="panel">
           <div class="section-head"><div><p class="eyebrow">数据源</p><h2>飞书电子表格链接</h2></div><span id="settings-state" class="badge"></span></div>
-          <p class="panel-note">使用符合软件规范的飞书表格，详见新手指引。</p>
-          <label class="field"><span class="sr-only">飞书电子表格链接</span><input id="sheet-url" type="url" aria-label="飞书电子表格链接" placeholder="https://...feishu.cn/sheets/...?...sheet=..."></label>
+          <p class="panel-note">支持飞书电子表格链接，以及知识库中的表格节点直链；知识库直链可以没有 sheet 参数。</p>
+          <label class="field"><span class="sr-only">飞书电子表格链接</span><input id="sheet-url" type="url" aria-label="飞书电子表格链接" placeholder="https://团队域名.feishu.cn/sheets/…?sheet=… 或 /wiki/…"></label>
           <div class="button-row"><button id="save-sheet">保存链接</button><button id="open-feishu" class="secondary">打开飞书登录</button><button id="detect-feishu" class="secondary">检测登录</button><button id="close-feishu" class="secondary">关闭飞书 Chrome</button><span id="settings-status"></span></div>
         </section>
         <section class="panel plan-panel">
           <div class="section-head"><div><p class="eyebrow">每日计划</p><h2>获取、排期与发布</h2></div><span id="plan-summary"></span></div>
-          <div class="plan-controls"><label class="field compact"><span>发布日期</span><input id="plan-date" type="date"></label><div class="action-with-estimate"><button id="create-plan">拉取飞书并生成计划</button><small id="pull-estimate">正在估算…</small></div><button id="clear-cache" class="secondary">清空下载缓存</button></div>
+          <div class="plan-controls"><label class="field compact"><span>发布日期</span><input id="plan-date" type="date"></label><div class="action-with-estimate"><button id="create-plan-current-filter">使用当前筛选拉取</button><small id="pull-estimate">正在估算…</small></div><button id="clear-cache" class="secondary">清空下载缓存</button></div>
           <p id="plan-status" class="panel-note">尚未生成计划。</p>
-          <div class="table-wrap"><table><thead><tr><th>序号</th><th>视频文件</th><th>品类</th><th>产品型号</th><th>发布时间</th><th>文案</th><th>Tag</th><th>封面</th><th>状态</th></tr></thead><tbody id="plan-body"><tr><td colspan="9">等待生成计划</td></tr></tbody></table></div>
-          <label class="confirm-field"><input id="batch-confirm" type="checkbox"><span>我已人工检查文件、品类、产品型号、发布时间、文案、Tag、封面和正式账号，授权逐条发布。任意一条报错后整批停止。</span></label>
-          <div class="button-row"><div class="action-with-estimate"><button id="execute-plan" class="danger">确认无误，开始批量发布</button><small id="publish-estimate">正在估算…</small></div><span id="batch-status"></span></div>
+          <div class="plan-selection-bar"><button id="select-all" class="secondary">全选可发布项</button><button id="select-none" class="secondary">取消全选</button><button id="sync-ids" class="secondary">同步视频ID</button><button id="export-ids" class="secondary">更新ID记录</button><button id="copy-id-table" class="secondary">复制ID表格</button><button id="open-id-records" class="secondary">打开ID记录</button><span id="selection-summary"></span></div>
+          <div class="table-wrap"><table><thead><tr><th>选择</th><th>编辑</th><th>序号</th><th>飞书实际行</th><th>视频文件</th><th>品类</th><th>产品型号</th><th>发布时间</th><th>AI声明</th><th>文案</th><th>Tag</th><th>封面</th><th>商品配置</th><th>执行状态</th><th>发布ID</th></tr></thead><tbody id="plan-body"><tr><td colspan="15">等待生成计划</td></tr></tbody></table></div>
+          <label class="confirm-field"><input id="batch-confirm" type="checkbox"><span>我已人工检查文件、品类、产品型号、发布时间、AI标识、文案、Tag、封面和正式账号，授权发布已勾选项。任意一条报错后本次执行停止，已完成状态保留。</span></label>
+          <div class="button-row"><div class="action-with-estimate"><button id="execute-plan" class="danger">发布已勾选的未完成视频</button><small id="publish-estimate">正在估算…</small></div><span id="batch-status"></span></div>
         </section>
-        <div class="notice execution-boundary"><strong>执行边界：</strong>飞书和本地素材库始终只读；任意一条发生异常，整批停止。自动流程期间请勿移动鼠标、敲击键盘或切换窗口。</div>
+        <div class="notice execution-boundary"><strong>执行边界：</strong>飞书和本地素材库始终只读；任意一条发生异常，本次执行停止并保留进度。自动流程期间请勿移动鼠标、敲击键盘或切换窗口。</div>
       </section>
       <section class="page" data-page-panel="test">
-        <header><div><p class="eyebrow">独立验证</p><h1>测试工具</h1><p>所有测试相关能力集中在这里，不影响正式工作台。</p></div><span class="badge">仅测试小号</span></header>
+        <header><div><p class="eyebrow">独立验证</p><h1>测试工具</h1><p>抖音与视频号单条测试集中在同一个页面，不影响正式工作台。</p></div><span id="test-platform-badge" class="badge">抖音测试</span></header>
+        <section class="panel"><div class="workspace-controls"><label class="field compact"><span>测试平台</span><select id="test-platform"><option value="douyin">抖音</option><option value="wechat-channels">微信视频号</option></select></label><span class="panel-note">切换平台后使用对应的独立测试账号和 Chrome Profile。</span></div></section>
         <section id="accounts-test" class="accounts one-column" aria-live="polite"></section>
         <section class="panel"><div class="section-head"><div><p class="eyebrow">单条实际发布</p><h2>验证完整发布链路</h2></div></div><p class="panel-note">会在测试小号实际点击一次“发布”。请使用足够晚的定时时间，完成后立即到作品管理检查或删除。</p>
-          <div class="form-grid"><label class="field"><span>视频文件（必填）</span><div class="file-row"><button id="choose-video" class="secondary">选择视频</button><span id="video-path">尚未选择</span></div></label><label class="field"><span>封面图片（可选）</span><div class="file-row"><button id="choose-cover" class="secondary">选择封面</button><span id="cover-path">尚未选择</span></div></label><label class="field"><span>正文（最多20个汉字，可为空）</span><textarea id="test-body" rows="3"></textarea><small id="body-count">0 个汉字</small></label><label class="field"><span>Tag（逗号或换行分隔，最多5个）</span><textarea id="test-tags" rows="3"></textarea></label><label class="field"><span>定时发布时间</span><input id="scheduled-at" type="datetime-local"></label><label class="confirm-field"><input id="test-confirm" type="checkbox"><span>我确认当前检测成功的是测试小号，并授权客户端实际点击一次“发布”。</span></label></div>
+          <div class="form-grid"><label class="field"><span>视频文件（必填）</span><div class="file-row"><button id="choose-video" class="secondary">选择视频</button><span id="video-path">尚未选择</span></div></label><label class="field"><span>封面图片（可选）</span><div class="file-row"><button id="choose-cover" class="secondary">选择封面</button><span id="cover-path">尚未选择</span></div></label><label class="field"><span>正文（字数不限，可为空）</span><textarea id="test-body" rows="3"></textarea><small id="body-count">0 个汉字，仅供参考</small></label><label class="field"><span>Tag（逗号或换行分隔，最多5个）</span><textarea id="test-tags" rows="3"></textarea></label><label class="field"><span>定时发布时间</span><input id="scheduled-at" type="datetime-local"></label><label class="confirm-field"><input id="test-confirm" type="checkbox"><span>我确认当前检测成功的是测试小号，并授权客户端实际点击一次“发布”。</span></label></div>
           <div class="button-row"><button id="prepare-test">执行测试发布</button><span id="prepare-status">等待输入测试资料</span></div>
+          <div id="test-id-tool" class="test-id-tool"><div><p class="eyebrow">发布后验证</p><h3>测试获取视频ID</h3><p class="panel-note">抖音测试使用上方文案和定时时间，在小号个人主页匹配定时视频并读取ID。视频号ID接口目前仅预留。</p></div><div class="button-row"><button id="test-resolve-id" class="secondary">获取小号视频ID</button><span id="test-id-status">尚未执行</span></div></div>
         </section>
       </section>
       <section class="page" data-page-panel="guide">
         <header><div><p class="eyebrow">首次使用</p><h1>新手指引与工作原理</h1><p>按下面清单准备一次，日常使用只需选择日期、复核计划和开始发布。</p></div></header>
-        <section class="panel guide-block"><h2>软件如何工作</h2><p>抖音批量发布助手分别保存飞书、测试账号和发布账号的本地 Chrome 登录环境。它从飞书表格复制只读数据，逐个下载当天附件，再按产品型号匹配本地封面、文案和 Tag。计划经人工确认后，脚本在抖音创作者中心逐条上传并设置定时时间。整个流程不使用生成式 AI，也不写入飞书。</p></section>
+        <section class="panel guide-block"><h2>软件如何工作</h2><p>短视频批量发布助手以“发布工作区”隔离不同平台和账号。每个工作区分别保存飞书、发布账号、表格链接和本地素材库。软件从对应飞书表格复制只读数据，逐个下载当天附件，再按产品型号匹配封面、文案和 Tag；商城号还会匹配商品短标题与已确认的商品链接。整个流程不使用生成式 AI，也不写入飞书。</p></section>
         <section class="panel guide-block"><h2>飞书表格需要准备什么</h2><div class="guide-grid"><div><strong>必需列</strong><p>【素材链接】【产品类目】【产品型号】【发布时间】。表头文字需与设置一致。</p></div><div><strong>可选列</strong><p>【允许发布】存在时，只有填写“是、允许、可发布、发布、true、1、yes、√”的行会进入计划。</p></div><div><strong>素材链接</strong><p>使用飞书附件或可下载的 HTTPS 链接；登录账号必须拥有表格查看和附件下载权限。</p></div><div><strong>发布时间</strong><p>人工填写希望发布的日期。软件只拉取所选日期，具体时刻按排期规则自动生成。</p></div></div></section>
         <section class="panel guide-block"><h2>本地素材库结构</h2><pre>本地素材库/
   封面库/产品型号/*.jpg
   文案库/产品型号.txt
   Tag库/产品型号.txt
+  商品短标题库/产品型号.txt（仅商城号必需）
+  商品配置/产品型号映射.csv（仅商城号必需）
   下载缓存/
   发布日志/</pre><p>文案和 Tag 文件每行一个方案；Tag 用逗号分隔，不必写 #。产品型号必须与飞书单元格一致。</p><button data-library="root">打开并准备素材库</button></section>
-        <section class="panel guide-block"><h2>日常操作步骤</h2><ol><li>在主工作台保存飞书电子表格链接，打开专用 Chrome 登录飞书并检测。</li><li>打开“发布账号”，首次扫码后检测并人工核对账号。</li><li>选择发布日期，点击“拉取飞书并生成计划”。</li><li>逐行检查视频、品类、型号、时间、文案、Tag和封面；问题项全部解决后勾选授权。</li><li>点击批量发布，期间不要操作设备。完成提示出现后，到作品管理核对数量和定时时间。</li><li>确认无误后清空下载缓存；发布日志会保留。</li></ol><div class="notice"><strong>注意事项：</strong>拉取飞书素材和发布视频期间，不要移动鼠标、敲击键盘、切换窗口或运行其他前台任务。遇到问题时等待流程停止并生成错误报告，再由人工接管。</div><button id="finish-guide">准备完成，进入主工作台</button></section>
+        <section class="panel guide-block"><h2>日常操作步骤</h2><ol><li>先选择发布工作区；平台、账号、飞书表格和素材库会随工作区一起切换。</li><li>保存当前工作区的飞书表格链接，打开专用 Chrome 登录飞书并检测。</li><li>打开当前发布账号，首次扫码后检测并人工核对。商城号在本地型号映射表中维护真正的抖店搜索型号。</li><li>生成商城计划后点击“现场获取本批商品链接”；价格不同的候选在计划编辑窗口人工选择。</li><li>点击发布已勾选项。中断后保留已完成状态，可续发未完成项。</li></ol><div class="notice"><strong>注意事项：</strong>当前内部版本已关闭新手指引入口。本段仅保留为开发参考。</div><button id="finish-guide">准备完成，进入主工作台</button></section>
       </section>
       <section class="page" data-page-panel="settings">
         <header><div><p class="eyebrow">本地管理</p><h1>设置</h1><p>这些设置保存在本机，不会上传。</p></div></header>
@@ -71,6 +87,7 @@
   </div>
   <div id="donation-modal" class="modal-backdrop" hidden><section class="modal-card donation-modal" role="dialog" aria-modal="true" aria-labelledby="donation-title"><button class="modal-close" data-close-modal="donation-modal" aria-label="关闭">×</button><h2 id="donation-title">打赏作者 SquiD</h2><img src="assets/donation-qr.jpg" alt="支付宝与微信打赏二维码"><p>可使用支付宝或微信扫码。</p></section></div>
   <div id="delete-account-modal" class="modal-backdrop" hidden><section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="delete-account-title"><button class="modal-close" data-close-modal="delete-account-modal" aria-label="关闭">×</button><p class="eyebrow">三重验证</p><h2 id="delete-account-title">删除账号登录资料</h2><p id="delete-account-description" class="panel-note"></p><label class="confirm-field"><input id="delete-check" type="checkbox"><span>我确认对应的 Chrome 已关闭，并了解登录资料将被移入回收站。</span></label><label class="field"><span>输入账号昵称以核对目标</span><input id="delete-account-name" autocomplete="off"></label><label class="field"><span>输入“删除账号”确认操作</span><input id="delete-confirm-phrase" autocomplete="off"></label><div class="button-row"><button id="confirm-delete-account" class="danger" disabled>完成三重验证后删除</button><button class="secondary" data-close-modal="delete-account-modal">取消</button></div><p id="delete-account-status"></p></section></div>
+  <div id="edit-plan-modal" class="modal-backdrop" hidden><section class="modal-card edit-plan-modal" role="dialog" aria-modal="true" aria-labelledby="edit-plan-title"><button class="modal-close" data-close-modal="edit-plan-modal" aria-label="关闭">×</button><p class="eyebrow">发布计划</p><h2 id="edit-plan-title">编辑计划项</h2><p id="edit-plan-file" class="immutable-file"></p><div class="edit-two-columns"><label class="field"><span>产品类目</span><input id="edit-plan-category"></label><label class="field"><span>产品型号</span><input id="edit-plan-model"></label></div><label class="field"><span>发布时间</span><input id="edit-plan-time" type="datetime-local"></label><label class="field"><span>文案（可为空，字数不限）</span><textarea id="edit-plan-body" rows="4"></textarea></label><label class="field"><span>Tag（逗号或换行分隔，最多5个）</span><textarea id="edit-plan-tags" rows="3"></textarea></label><label class="field"><span>封面</span><div class="file-row"><button id="edit-plan-choose-cover" class="secondary">选择封面</button><span id="edit-plan-cover"></span></div></label><div id="edit-commerce-fields" hidden><label class="field"><span>商品短标题（最多10个汉字）</span><input id="edit-product-short-title" maxlength="10"></label><label class="field"><span>本批次使用的商品链接</span><select id="edit-product-link"></select></label></div><div class="button-row"><button id="save-plan-item">保存修改</button><button class="secondary" data-close-modal="edit-plan-modal">取消</button></div><p id="edit-plan-status"></p></section></div>
   <script src="app.js"></script>
 </body>
 </html>
